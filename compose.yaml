@@ -3,6 +3,8 @@
 # - production:  docker compose -f compose.yaml -f compose.prod.yaml ...
 # The database credentials below are development defaults only; compose.prod.yaml
 # replaces them with values that must be provided at runtime.
+# Ports are published by the environment files only (Compose merges port lists,
+# so a port published here could not be restricted to localhost in development).
 
 services:
   php:
@@ -15,16 +17,6 @@ services:
     volumes:
       - caddy_data:/data
       - caddy_config:/config
-    ports:
-      - target: 80
-        published: ${HTTP_PORT:-80}
-        protocol: tcp
-      - target: 443
-        published: ${HTTPS_PORT:-443}
-        protocol: tcp
-      - target: 443
-        published: ${HTTP3_PORT:-443}
-        protocol: udp
     depends_on:
       database:
         condition: service_healthy
