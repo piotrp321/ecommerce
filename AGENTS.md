@@ -24,6 +24,7 @@ Wszystko uruchamiaj w kontenerze przez `make`. Nie używaj `symfony serve`, `sym
 - `make check`: **obowiązkowa bramka przed każdym commitem**
 - `make build-prod`: obraz produkcyjny; sekrety podaje się dopiero przy uruchomieniu (`compose.prod.yaml`)
 - `make check-prod`: kontrola obrazu prod w tymczasowym projekcie na portach 8080/8443; uruchamiaj po zmianach w `Dockerfile`, `compose*.yaml` lub `docker/`
+- CI (`.github/workflows/ci.yml`) uruchamia te same komendy: `make build up install migrate check` oraz `make check-prod`. Nowe kontrole dodawaj do `Makefile`, nie bezpośrednio do workflow.
 
 Gdy coś nie działa, najpierw czytaj `var/log/`, logi kontenera (`make logs`) i `bin/console debug:*`, zanim zmienisz kod.
 

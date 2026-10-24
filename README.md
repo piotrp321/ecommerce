@@ -1,5 +1,7 @@
 # E-commerce backend
 
+[![CI](https://github.com/piotrp321/ecommerce/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/piotrp321/ecommerce/actions/workflows/ci.yml)
+
 Edukacyjny backend e-commerce w PHP 8.5 i Symfony 8.1 (docelowo 8.2), rozwijany w kierunku DDD i architektury heksagonalnej.
 Projekt służy do nauki Agentic Software Development.
 
@@ -46,6 +48,15 @@ Stan aplikacji i bazy: https://localhost/health
 | `make stan` | PHPStan, poziom `max` |
 | `make check` | Wszystkie bramki jakości: obowiązkowe przed commitem |
 | `make check-prod` | Kontrola obrazu produkcyjnego w tymczasowym projekcie (porty 8080/8443) |
+
+## CI
+
+GitHub Actions (`.github/workflows/ci.yml`) uruchamia się dla każdego Pull Requesta do `main` i po pushu na `main`, na runnerze `ubuntu-24.04`, z tokenem tylko do odczytu. Używa tych samych komend co lokalnie:
+
+- **Quality gates:** `make build`, `make up`, `make install`, `make migrate`, `make check` (composer validate, lint, PHPStan max, PHPUnit z przygotowaniem bazy testowej),
+- **Production image:** `make check-prod` (obraz prod z jednorazowymi, generowanymi sekretami).
+
+Workflow nie korzysta z żadnych sekretów repozytorium.
 
 ## Środowiska: prod i dev
 
