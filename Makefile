@@ -1,0 +1,76 @@
+# Development commands. None of the targets removes volumes or data.
+
+DOCKER_COMP = docker compose
+PHP_CONT    = $(DOCKER_COMP) exec php
+PHP         = $(PHP_CONT) php
+COMPOSER    = $(PHP_CONT) composer
+SYMFONY     = $(PHP) bin/console
+
+.DEFAULT_GOAL = help
+.PHONY: help build build-prod up down logs sh install composer console migrate db-test test stan arch check check-prod
+
+## —— Help ———————————————————————————————————————————————————————————————————
+help: ## List available targets
+	@grep -E '(^[a-zA-Z0-9_-]+:.*?##.*$$)|(^##)' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}{printf "\033[32m%-12s\033[0m %s\n", $$1, $$2}' | sed -e 's/\[32m##/[33m/'
+
+## —— Docker —————————————————————————————————————————————————————————————————
+build: ## Build the dev images
+	@$(DOCKER_COMP) build --pull
+
+build-prod: ## Build the production image (dependencies installed during the build, no secrets needed)
+	@docker build --pull --target frankenphp_prod --tag $(IMAGES_PREFIX)ecommerce-php .
+
+up: ## Start the containers in detached mode
+	@$(DOCKER_COMP) up --detach --wait
+
+down: ## Stop and remove the containers (volumes are kept)
+	@$(DOCKER_COMP) down --remove-orphans
+
+logs: ## Follow the container logs
+	@$(DOCKER_COMP) logs --tail=100 --follow
+
+sh: ## Open a shell in the php container
+	@$(PHP_CONT) sh
+
+## —— Composer / Symfony ————————————————————————————————————————————————————
+install: ## Install dependencies, including dev ones (dev only)
+	@$(COMPOSER) install --prefer-dist --no-progress --no-interaction
+
+composer: ## Run composer, pass the arguments with c="...", e.g. make composer c="require foo/bar"
+	@$(COMPOSER) $(c)
+
+console: ## Run bin/console, pass the arguments with c="...", e.g. make console c=about
+	@$(SYMFONY) $(c)
+
+## —— Database ——————————————————————————————————————————————————————————————
+migrate: ## Run the database migrations (never executed automatically)
+	@$(SYMFONY) doctrine:migrations:migrate --no-interaction --allow-no-migration
+
+db-test: ## Prepare the test database (create if missing, run migrations); idempotent
+	@$(SYMFONY) doctrine:database:create --if-not-exists --env=test
+	@$(SYMFONY) doctrine:migrations:migrate --no-interaction --allow-no-migration --env=test
+
+## —— Quality ———————————————————————————————————————————————————————————————
+test: db-test ## Run the PHPUnit test suites (prepares the test database first)
+	@$(PHP) bin/phpunit
+
+stan: ## Run PHPStan
+	@$(SYMFONY) cache:warmup --env=dev --quiet
+	@$(PHP) vendor/bin/phpstan analyse --memory-limit=1G --no-progress
+
+arch: ## Check the architecture rules (Deptrac, deptrac.yaml)
+	@$(PHP) vendor/bin/deptrac analyse --no-progress
+	@out="$$($(PHP) vendor/bin/deptrac debug:unassigned)"; echo "$$out"; \
+		echo "$$out" | grep -q 'There are no unassigned tokens' \
+		|| { echo "Classes above are outside App\\<Module>\\<Layer>\\ (see deptrac.yaml)."; exit 1; }
+
+check: ## Run all quality gates (required before every commit)
+	@$(COMPOSER) validate --strict
+	@$(SYMFONY) lint:container
+	@$(SYMFONY) lint:yaml config --parse-tags
+	@$(MAKE) --no-print-directory arch
+	@$(MAKE) --no-print-directory stan
+	@$(MAKE) --no-print-directory test
+
+check-prod: build-prod ## Run the prod image in an ephemeral project (ports 8080/8443) and check it
+	@./docker/check-prod.sh

@@ -1,0 +1,50 @@
+# Shared configuration, always combined with an environment file:
+# - development: compose.override.yaml (loaded automatically by `docker compose`),
+# - production:  docker compose -f compose.yaml -f compose.prod.yaml ...
+# The database credentials below are development defaults only; compose.prod.yaml
+# replaces them with values that must be provided at runtime.
+# Ports are published by the environment files only (Compose merges port lists,
+# so a port published here could not be restricted to localhost in development).
+
+# Development project name. compose.prod.yaml sets its own name, so the two
+# environments never share containers, networks or volumes.
+name: ecommerce
+
+services:
+  php:
+    build:
+      context: .
+    restart: unless-stopped
+    environment:
+      SERVER_NAME: ${SERVER_NAME:-localhost}, php:80
+      DATABASE_NAME: ${POSTGRES_DB:-app}
+      DATABASE_USER: ${POSTGRES_USER:-app}
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-!ChangeMe!}
+      DATABASE_SERVER_VERSION: ${POSTGRES_VERSION:-18}
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      database:
+        condition: service_healthy
+
+  database:
+    image: postgres:${POSTGRES_VERSION:-18}-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-!ChangeMe!}
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+    healthcheck:
+      test: ["CMD", "pg_isready", "-d", "${POSTGRES_DB:-app}", "-U", "${POSTGRES_USER:-app}"]
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    volumes:
+      # PostgreSQL 18+ images keep data under /var/lib/postgresql/<major>/docker
+      - database_data:/var/lib/postgresql
+
+volumes:
+  caddy_data:
+  caddy_config:
+  database_data:
