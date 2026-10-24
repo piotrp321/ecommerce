@@ -87,3 +87,14 @@ RUN set -eux; \
 		composer run-script --no-dev post-install-cmd; \
 	chmod +x bin/console; \
 	sync;
+
+# Run as an unprivileged user. Only var/ and Caddy's data/config directories are
+# writable; the application code stays owned by root. The capability lets the
+# server bind ports 80/443 without root.
+RUN set -eux; \
+	groupadd --system --gid 1000 app; \
+	useradd --system --uid 1000 --gid app --no-create-home --shell /usr/sbin/nologin app; \
+	setcap CAP_NET_BIND_SERVICE=+eip /usr/local/bin/frankenphp; \
+	chown -R app:app /app/var /data/caddy /config/caddy
+
+USER app
