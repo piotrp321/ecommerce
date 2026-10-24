@@ -47,6 +47,9 @@ compose up --detach --no-build --wait >/dev/null 2>&1 && pass "containers health
 
 expect_health 200 "health check with special-character database password"
 
+compose exec -T php php bin/console doctrine:migrations:migrate --no-interaction --allow-no-migration >/dev/null 2>&1 \
+	&& pass "migrations run on demand (bin/console doctrine:migrations:migrate)" || fail "migrations failed"
+
 [ "$(compose exec -T php id -u)" = "1000" ] && pass "php runs as uid 1000" || fail "php does not run as uid 1000"
 compose exec -T php sh -c 'touch /app/src/.write-test' >/dev/null 2>&1 \
 	&& fail "application code is writable" || pass "application code is read-only"
