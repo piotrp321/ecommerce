@@ -1,9 +1,10 @@
-# Architecture rules (DDD + Hexagonal, modular monolith). Run: make arch
-# See AGENTS.md ("Architektura") for the rationale.
+# Architecture rules (DDD + Hexagonal, modular monolith). Run: make backend-arch
+# See apps/backend/AGENTS.md ("Architektura") for the rationale.
 #
 # Every class in src/ must belong to a layer: App\<Module>\<Layer>\..., where
-# Module is Catalog, Cart, Ordering, Inventory or Shared and Layer is Domain,
-# Application or Infrastructure. `make arch` also fails on unassigned classes.
+# Module is Catalog, Inventory, Cart, Ordering, Payments or Shared and Layer is
+# Domain, Application or Infrastructure. `make backend-arch` also fails on
+# unassigned classes.
 deptrac:
   paths:
     - ./src
@@ -58,6 +59,18 @@ deptrac:
       collectors:
         - type: classNameRegex
           value: '#^App\\Inventory\\Infrastructure\\#'
+    - name: Payments_Domain
+      collectors:
+        - type: classNameRegex
+          value: '#^App\\Payments\\Domain\\#'
+    - name: Payments_Application
+      collectors:
+        - type: classNameRegex
+          value: '#^App\\Payments\\Application\\#'
+    - name: Payments_Infrastructure
+      collectors:
+        - type: classNameRegex
+          value: '#^App\\Payments\\Infrastructure\\#'
     - name: Shared_Domain
       collectors:
         - type: classNameRegex
@@ -141,6 +154,20 @@ deptrac:
     Inventory_Infrastructure:
       - Inventory_Domain
       - Inventory_Application
+      - Shared_Domain
+      - Shared_Application
+      - Shared_Infrastructure
+      - Http
+      - Persistence
+    Payments_Domain:
+      - Shared_Domain
+    Payments_Application:
+      - Payments_Domain
+      - Shared_Domain
+      - Shared_Application
+    Payments_Infrastructure:
+      - Payments_Domain
+      - Payments_Application
       - Shared_Domain
       - Shared_Application
       - Shared_Infrastructure
