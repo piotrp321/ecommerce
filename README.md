@@ -20,10 +20,10 @@ make build
 make up
 make install
 make migrate
-make db-test
 ```
 
 Aplikacja działa pod adresem https://localhost (certyfikat generowany lokalnie przez Caddy).
+W dev wszystkie porty (80, 443, 5432) są dostępne tylko z `127.0.0.1`.
 Stan aplikacji i bazy: https://localhost/health
 
 ```json
@@ -37,20 +37,37 @@ Stan aplikacji i bazy: https://localhost/health
 | Komenda | Opis |
 |---|---|
 | `make build` / `make up` / `make down` | Budowa obrazów dev, start, zatrzymanie (wolumeny zostają) |
-| `make build-prod` | Budowa obrazu produkcyjnego |
+| `make build-prod` | Budowa obrazu produkcyjnego (bez sekretów) |
 | `make install` | Instalacja zależności (dev) |
 | `make composer c="…"` / `make console c="…"` | Composer i `bin/console` w kontenerze |
 | `make migrate` | Migracje bazy danych (nie są uruchamiane automatycznie) |
-| `make db-test` | Utworzenie bazy testowej (`app_test`) |
-| `make test` | PHPUnit (suity `unit` i `functional`) |
+| `make db-test` | Przygotowanie bazy testowej `app_test` (idempotentne) |
+| `make test` | PHPUnit (suity `unit` i `functional`), najpierw `make db-test` |
 | `make stan` | PHPStan, poziom `max` |
 | `make check` | Wszystkie bramki jakości: obowiązkowe przed commitem |
 
 ## Środowiska: prod i dev
 
-Obraz (`Dockerfile`) ma osobne etapy:
+Obraz (`Dockerfile`) ma osobne etapy, konfiguracja serwera i PHP jest w `docker/frankenphp/`:
 
-- **`frankenphp_prod`**: zależności produkcyjne (`--no-dev`) instalowane **podczas budowania obrazu**, kod wbudowany w obraz, `APP_ENV=prod`. Konfiguracja: `compose.yaml`, budowany przez `make build-prod`.
-- **`frankenphp_dev`**: uproszczenie tylko dla developmentu. Kod i `vendor/` są montowane z hosta (bind mount), zależności instaluje się jawnie przez `make install`. Konfiguracja: `compose.override.yaml`, ładowany automatycznie przez `docker compose`.
+- **`frankenphp_prod`**: zależności produkcyjne (`--no-dev`) instalowane **podczas budowania obrazu**, kod wbudowany w obraz, `APP_ENV=prod`, proces działa jako użytkownik `app` (uid 1000). Budowany przez `make build-prod`, uruchamiany z `compose.yaml` + `compose.prod.yaml`.
+- **`frankenphp_dev`**: uproszczenie tylko dla developmentu. Kod, `vendor/` i `var/` są montowane z hosta (bind mount), zależności instaluje się jawnie przez `make install`. Konfiguracja: `compose.yaml` + `compose.override.yaml` (ładowany automatycznie).
 
 W żadnym środowisku kontener przy starcie nie instaluje zależności ani nie wykonuje migracji.
+
+### Uruchomienie produkcyjne
+
+Obraz nie zawiera sekretów ani wartości z `.env`. Konfigurację podaje się przy uruchomieniu:
+
+| Zmienna | Wymagana | Opis |
+|---|---|---|
+| `APP_SECRET` | tak | Co najmniej 32 znaki, np. `openssl rand -hex 32` |
+| `POSTGRES_PASSWORD` | tak | Hasło bazy, z niego składany jest `DATABASE_URL` |
+| `SERVER_NAME` | nie | Domena serwera (domyślnie `localhost`) |
+
+```bash
+make build-prod
+APP_SECRET=… POSTGRES_PASSWORD=… docker compose -f compose.yaml -f compose.prod.yaml up --detach --wait
+```
+
+Bez wymaganych zmiennych Compose odmawia startu. Uruchomiony bez Compose obraz sprawdza `APP_SECRET` i `DATABASE_URL` w entrypoincie i kończy działanie z błędem.
