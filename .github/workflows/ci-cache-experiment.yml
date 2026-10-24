@@ -1,0 +1,115 @@
+# Experiment: does a Buildx layer cache in the GitHub Actions cache (type=gha)
+# make CI faster? Each run executes the current pipeline (baseline) and the cached
+# variant side by side on fresh runners. Runs only on pushes to this experiment
+# branch; it never publishes images and never runs on main or pull requests.
+name: CI cache experiment
+
+on:
+  push:
+    branches: [experiment/ci-docker-cache]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cache-experiment
+  cancel-in-progress: false
+
+jobs:
+  dev-baseline:
+    name: dev / baseline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the development images
+        run: make build
+      - name: Start PostgreSQL and the application
+        run: make up
+      - name: Install dependencies
+        run: make install
+      - name: Run database migrations
+        run: make migrate
+      - name: Run all quality gates
+        run: make check
+      - name: Stop the containers
+        if: always()
+        run: make down
+
+  dev-cached:
+    name: dev / gha cache
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      COMPOSE_FILE: compose.yaml:compose.override.yaml:.github/compose.cache.yaml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Buildx (docker-container builder)
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Expose the Actions cache to Buildx
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            core.setSecret(process.env.ACTIONS_RUNTIME_TOKEN);
+            for (const name of ['ACTIONS_RUNTIME_TOKEN', 'ACTIONS_RESULTS_URL', 'ACTIONS_CACHE_URL', 'ACTIONS_CACHE_SERVICE_V2']) {
+              if (process.env[name]) core.exportVariable(name, process.env[name]);
+            }
+      - name: Build the development images
+        run: make build
+      - name: Start PostgreSQL and the application
+        run: make up
+      - name: Install dependencies
+        run: make install
+      - name: Run database migrations
+        run: make migrate
+      - name: Run all quality gates
+        run: make check
+      - name: Stop the containers
+        if: always()
+        run: make down
+
+  prod-baseline:
+    name: prod / baseline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # `make check-prod` split in two steps to time the build separately.
+      - name: Build the production image
+        run: make build-prod
+      - name: Check the production image
+        run: ./docker/check-prod.sh
+
+  prod-cached:
+    name: prod / gha cache
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Buildx (docker-container builder)
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Expose the Actions cache to Buildx
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            core.setSecret(process.env.ACTIONS_RUNTIME_TOKEN);
+            for (const name of ['ACTIONS_RUNTIME_TOKEN', 'ACTIONS_RESULTS_URL', 'ACTIONS_CACHE_URL', 'ACTIONS_CACHE_SERVICE_V2']) {
+              if (process.env[name]) core.exportVariable(name, process.env[name]);
+            }
+      # --load: the docker-container builder keeps images to itself; check-prod
+      # needs the image in the local Docker engine.
+      - name: Build the production image
+        run: >-
+          make build-prod BUILD_PROD_FLAGS="--load
+          --cache-from type=gha,scope=prod
+          --cache-to type=gha,scope=prod,mode=max"
+      - name: Check the production image
+        run: ./docker/check-prod.sh

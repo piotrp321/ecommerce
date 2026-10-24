@@ -1,0 +1,11 @@
+# CI only: layer cache of the dev image in the GitHub Actions cache (type=gha).
+# Added through COMPOSE_FILE in the workflow, so local `make` commands never use it.
+# Requires a docker-container Buildx builder and the Actions runtime variables.
+
+services:
+  php:
+    build:
+      cache_from:
+        - type=gha,scope=dev
+      cache_to:
+        - type=gha,scope=dev,mode=max

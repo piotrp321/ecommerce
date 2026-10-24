@@ -5,6 +5,9 @@ PHP_CONT    = $(DOCKER_COMP) exec php
 PHP         = $(PHP_CONT) php
 COMPOSER    = $(PHP_CONT) composer
 SYMFONY     = $(PHP) bin/console
+# Extra `docker build` flags for build-prod, empty locally. CI passes its cache
+# options here, e.g. BUILD_PROD_FLAGS="--cache-from type=gha --load".
+BUILD_PROD_FLAGS ?=
 
 .DEFAULT_GOAL = help
 .PHONY: help build build-prod up down logs sh install composer console migrate db-test test stan arch check check-prod
@@ -18,7 +21,7 @@ build: ## Build the dev images
 	@$(DOCKER_COMP) build --pull
 
 build-prod: ## Build the production image (dependencies installed during the build, no secrets needed)
-	@docker build --pull --target frankenphp_prod --tag $(IMAGES_PREFIX)ecommerce-php .
+	@docker build --pull --target frankenphp_prod --tag $(IMAGES_PREFIX)ecommerce-php $(BUILD_PROD_FLAGS) .
 
 up: ## Start the containers in detached mode
 	@$(DOCKER_COMP) up --detach --wait
