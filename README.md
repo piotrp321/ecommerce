@@ -45,6 +45,7 @@ Stan aplikacji i bazy: https://localhost/health
 | `make test` | PHPUnit (suity `unit` i `functional`), najpierw `make db-test` |
 | `make stan` | PHPStan, poziom `max` |
 | `make check` | Wszystkie bramki jakości: obowiązkowe przed commitem |
+| `make check-prod` | Kontrola obrazu produkcyjnego w tymczasowym projekcie (porty 8080/8443) |
 
 ## Środowiska: prod i dev
 
@@ -64,10 +65,42 @@ Obraz nie zawiera sekretów ani wartości z `.env`. Konfigurację podaje się pr
 | `APP_SECRET` | tak | Co najmniej 32 znaki, np. `openssl rand -hex 32` |
 | `POSTGRES_PASSWORD` | tak | Hasło bazy, przekazywane aplikacji jako `DATABASE_PASSWORD` (dowolne znaki, bez kodowania URL) |
 | `SERVER_NAME` | nie | Domena serwera (domyślnie `localhost`) |
+| `PROD_HTTP_PORT`, `PROD_HTTPS_PORT`, `PROD_HTTP3_PORT` | nie | Porty publikowane na hoście (domyślnie 80/443) |
 
 ```bash
 make build-prod
-APP_SECRET=… POSTGRES_PASSWORD=… docker compose -f compose.yaml -f compose.prod.yaml up --detach --wait
+export APP_SECRET=… POSTGRES_PASSWORD=…
+docker compose -f compose.yaml -f compose.prod.yaml up --detach --wait
 ```
 
 Bez wymaganych zmiennych Compose odmawia startu. Uruchomiony bez Compose obraz sprawdza `APP_SECRET` i `DATABASE_PASSWORD` w entrypoincie i kończy działanie z błędem.
+
+Produkcja działa jako osobny projekt Compose `ecommerce-prod` (własne kontenery, sieć i wolumeny `ecommerce-prod_*`), niezależny od projektu dev `ecommerce`.
+Dev zajmuje `127.0.0.1:80/443`, więc gdy oba środowiska działają na jednym hoście, prod musi używać innych portów, np. `PROD_HTTP_PORT=8080 PROD_HTTPS_PORT=8443 PROD_HTTP3_PORT=8443`.
+
+### Migracje w produkcji
+
+Migracje nigdy nie uruchamiają się automatycznie. Po wdrożeniu nowego obrazu wykonaj je jawnie w działającym kontenerze, z tymi samymi zmiennymi środowiskowymi:
+
+```bash
+docker compose -f compose.yaml -f compose.prod.yaml exec php \
+  php bin/console doctrine:migrations:migrate --no-interaction --allow-no-migration
+```
+
+Zalecenia:
+
+- Przed migracją zrób kopię zapasową bazy, np. `docker compose -f compose.yaml -f compose.prod.yaml exec database pg_dump -U app app > backup.sql`.
+- Stan sprawdzisz komendą `doctrine:migrations:status`.
+- Pisz migracje zgodne wstecz (najpierw dodanie kolumny, usunięcie w kolejnym wdrożeniu), bo przez chwilę stara wersja aplikacji działa na nowym schemacie.
+
+### Kontrola obrazu produkcyjnego
+
+`make check-prod` buduje obraz prod i uruchamia go w tymczasowym projekcie `ecommerce-prod-check` na portach 8080/8443 (zmiana: `CHECK_PROD_HTTP_PORT`, `CHECK_PROD_HTTPS_PORT`), obok działającego dev.
+Dane są w tmpfs, więc kontrola nie zostawia wolumenów. Sekrety generuje na czas testu i nigdzie ich nie zapisuje. Sprawdza:
+
+- odmowę startu bez `APP_SECRET` i `POSTGRES_PASSWORD`,
+- `/health` przy haśle bazy ze znakami specjalnymi,
+- migracje,
+- użytkownika uid 1000 i kod tylko do odczytu,
+- 503 przy zatrzymanej bazie i powrót do 200,
+- brak hasła w logach.

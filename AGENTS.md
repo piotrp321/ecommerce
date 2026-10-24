@@ -23,6 +23,7 @@ Wszystko uruchamiaj w kontenerze przez `make`. Nie używaj `symfony serve`, `sym
 - `make stan`: PHPStan
 - `make check`: **obowiązkowa bramka przed każdym commitem**
 - `make build-prod`: obraz produkcyjny; sekrety podaje się dopiero przy uruchomieniu (`compose.prod.yaml`)
+- `make check-prod`: kontrola obrazu prod w tymczasowym projekcie na portach 8080/8443; uruchamiaj po zmianach w `Dockerfile`, `compose*.yaml` lub `docker/`
 
 Gdy coś nie działa, najpierw czytaj `var/log/`, logi kontenera (`make logs`) i `bin/console debug:*`, zanim zmienisz kod.
 
@@ -65,5 +66,6 @@ Nie zapisuj sekretów w repozytorium, obrazie Docker ani logach.
 - `src/Shared/Infrastructure/Http/`: wspólne elementy HTTP (np. `/health`)
 - `tests/Unit/`, `tests/Functional/`: struktura katalogów odzwierciedla `src/`
 - `docker/frankenphp/`: konfiguracja serwera, PHP i entrypoint obrazu prod
-- `compose.yaml` (wspólny), `compose.override.yaml` (dev, porty tylko na localhost), `compose.prod.yaml` (prod, wymagane sekrety)
+- `compose.yaml` (wspólny, projekt dev `ecommerce`), `compose.override.yaml` (dev, porty tylko na localhost), `compose.prod.yaml` (osobny projekt `ecommerce-prod`, wymagane sekrety), `compose.prod-check.yaml` (tymczasowy projekt dla `make check-prod`)
+- Połączenie z bazą: osobne parametry `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_NAME`, `DATABASE_USER`, `DATABASE_PASSWORD`, `DATABASE_SERVER_VERSION`; nie wprowadzaj z powrotem `DATABASE_URL`.
 - Mapowania Doctrine są rejestrowane per bounded context od Milestone 2 (`config/packages/doctrine.yaml`).
