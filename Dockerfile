@@ -92,12 +92,13 @@ RUN set -eux; \
 	sync;
 
 # Run as an unprivileged user. Only var/ and Caddy's data/config directories are
-# writable; the application code stays owned by root. The capability lets the
-# server bind ports 80/443 without root.
+# writable; the application code stays owned by root. Binding ports 80/443
+# without root relies on cap_net_bind_service, already set on the frankenphp
+# binary by the upstream image (setting it again would copy the binary into a
+# new layer on every build).
 RUN set -eux; \
 	groupadd --system --gid 1000 app; \
 	useradd --system --uid 1000 --gid app --no-create-home --shell /usr/sbin/nologin app; \
-	setcap CAP_NET_BIND_SERVICE=+eip /usr/local/bin/frankenphp; \
 	chown -R app:app /app/var /data/caddy /config/caddy
 
 USER app
