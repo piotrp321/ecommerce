@@ -1,108 +1,69 @@
 # AGENTS.md
 
-This is a Symfony project. Check `composer.json` for the exact Symfony/PHP version
-in use, and read `symfony.lock` to see which recipes ran. Don't assume Doctrine,
-Twig, API Platform, Messenger, or Lock are installed unless one of those says so.
+Jedyne źródło instrukcji dla agentów AI pracujących w tym repozytorium (Claude Code, Codex i inne).
+`CLAUDE.md` tylko importuje ten plik. Zmieniaj instrukcje tutaj, nie w kopiach.
 
-## Ask before generating
+Edukacyjny backend e-commerce: PHP 8.5, Symfony 8.1.* (docelowo 8.2.*), PostgreSQL 18, FrankenPHP w Dockerze.
+Docelowo DDD i architektura heksagonalna. Projekt służy do nauki Agentic Software Development.
 
-If the task doesn't specify, ask rather than guess:
+## Źródła prawdy
 
-- Persistence: Doctrine ORM, Doctrine ODM, or none?
-- Interface: server-rendered (Twig), API (Serializer, maybe API Platform), or both?
-- Auth: SecurityBundle, and which authenticator?
+- Wymagania biznesowe: `docs/specs/01-placing-order.md`. Nie zmieniaj ustalonych reguł bez decyzji użytkownika.
+- Zakres etapów: `docs/roadmap.md`. Realizuj wyłącznie bieżący milestone.
+- Wersje i zainstalowane pakiety: `composer.json`, `symfony.lock`. Nie zakładaj, że pakiet jest zainstalowany (np. Twig, Messenger, maker-bundle), dopóki tam go nie ma.
 
-If you can't ask (no interactive channel), state the assumption you're making and
-pick the smallest option (e.g. no persistence layer) rather than scaffolding a
-full stack nobody asked for.
+## Komendy
 
-## Adding features: Flex, not hand-wiring
+Wszystko uruchamiaj w kontenerze przez `make`. Nie używaj `symfony serve`, `symfony console` ani PHP/Composera z hosta.
 
-Install new capabilities with `composer require <package>` (e.g. `symfony/lock`,
-`symfony/messenger`, `orm-pack`) and let the Flex recipe register the bundle and
-generate its config. Don't hand-edit `config/bundles.php` or hand-write a bundle's
-base config; that's what the recipe is for. Don't skip a good-fit component just
-because it isn't installed yet; installing it is one command.
+- `make up`, `make install`: start środowiska dev i instalacja zależności
+- `make composer c="…"`, `make console c="…"`: Composer i `bin/console`
+- `make migrate`: migracje, wyłącznie tą komendą, nigdy automatycznie przy starcie kontenera
+- `make test`: PHPUnit (sam przygotowuje bazę testową przez `make db-test`)
+- `make stan`: PHPStan
+- `make check`: **obowiązkowa bramka przed każdym commitem**
+- `make build-prod`: obraz produkcyjny; sekrety podaje się dopiero przy uruchomieniu (`compose.prod.yaml`)
 
-## Conventions
+Gdy coś nie działa, najpierw czytaj `var/log/`, logi kontenera (`make logs`) i `bin/console debug:*`, zanim zmienisz kod.
 
-Follow https://symfony.com/doc/current/best_practices.html to write idiomatic
-Symfony:
+## Zasady pracy
 
-- Use PHP attributes for framework metadata, and not only on controllers:
-  `#[Route]`, `#[MapRequestPayload]`, `#[IsGranted]` on actions, `#[Assert\...]`
-  on properties, `#[AsCommand]`, `#[AsEventListener]`, `#[AsMessageHandler]`, and
-  `#[AsAlias]` / `#[AsTaggedItem]` / `#[Autoconfigure]` on services. No YAML or
-  XML routing.
-- Rely on autowiring and autoconfiguration. Type-hint constructor arguments and
-  let the container resolve them. Where a type-hint can't express it, stay in the
-  class with `#[Autowire]` (parameters, env vars, expressions) or `#[Target]` (one
-  of several implementations of an interface). A YAML service definition is the
-  last resort, not the first.
-- Controllers extend `AbstractController`, stay thin, and delegate to services.
-- Use the framework for what it already does: Form for server-rendered forms,
-  Validator for validation, Serializer for JSON, Messenger for async work,
-  Security (voters, authenticators) for access control, Twig `path()`/`url()`
-  instead of hardcoded URLs.
-- Before hand-writing infrastructure (locks, queues, caches, HTTP clients,
-  mailers, schedulers) or reaching for a third-party library, check whether a
-  Symfony component covers it. It usually does.
+- Małe commity, każdy z działającym stanem i zielonym `make check`. Format: `type: opis` (`feat`, `fix`, `chore`, `build`, `docs`, `test`, `refactor`).
+- Przed commitem przejrzyj staged diff (`git diff --cached`). Nie dodawaj zmian, których nie wprowadzałeś.
+- Najpierw test, potem implementacja. Kontroler testuj żądaniem HTTP (`WebTestCase`), serwis wywołaniem (`KernelTestCase` lub test jednostkowy).
+- PHPStan na poziomie `max`, bez baseline'u i bez `@phpstan-ignore` bez uzasadnienia.
+- `declare(strict_types=1);` w każdym nowym pliku PHP.
+- Nie rozszerzaj zakresu ponad bieżący milestone. Pomysły zapisuj jako propozycje dla użytkownika.
+- Gdy wymaganie jest niejasne, zapytaj zamiast zgadywać.
 
-Three specifics worth spelling out, because they are easy to get wrong:
+## Konwencje Symfony
 
-- Bind request data with `#[MapRequestPayload]` / `#[MapQueryString]` on action
-  arguments, which wires up Serializer and Validator for you, instead of calling
-  `json_decode()` or `SerializerInterface` by hand. If neither package is
-  installed yet, `composer require` them rather than falling back to manual
-  parsing.
-- Use constructor property promotion, and `readonly` for DTOs and value objects.
-  Don't mark a service `readonly` if it might become `lazy: true`: a lazy proxy
-  can't extend a `readonly` class.
-- Use `symfony/lock` (`LockFactory`) for mutual exclusion. A hand-built flag or
-  lock file looks fine in review and is usually wrong under concurrency.
+- Nowe możliwości instaluj przez `make composer c="require …"` i receptę Flex. Nie dopisuj ręcznie bundli w `config/bundles.php`.
+  Po każdej recepcie przejrzyj zmienione pliki: recepty potrafią dopisać konfigurację niezgodną z projektem (np. własną bazę w `compose.yaml`).
+- Metadane frameworka przez atrybuty PHP (`#[Route]`, `#[MapRequestPayload]`, `#[Assert\…]`, `#[AsCommand]`…). Bez routingu w YAML/XML.
+- Autowiring i autokonfiguracja. Gdy typ nie wystarcza: `#[Autowire]` / `#[Target]`. Definicja w YAML to ostateczność.
+- Kontrolery: cienkie klasy `final readonly` z metodą `__invoke` i zależnościami w konstruktorze, bez dziedziczenia po `AbstractController` (łatwiejsze testy jednostkowe). Logika trafia do serwisów.
+- Dane żądania wiąż przez `#[MapRequestPayload]` / `#[MapQueryString]`, nie przez ręczne `json_decode()`.
+- DTO i value objects: promocja właściwości w konstruktorze i `readonly`.
+- Wzajemne wykluczanie przez `symfony/lock`, nie ręczne flagi.
+- Zmiany schematu bazy wyłącznie przez migracje Doctrine (`make console c="doctrine:migrations:diff"`), nigdy `doctrine:schema:update`.
+- `.env` zawiera tylko domyślne wartości dev. Prawdziwe sekrety: `.env.local` (ignorowany przez git), sekrety Symfony albo zmienne środowiskowe przy uruchomieniu.
+- Styl kodu: standard Symfony (PSR-12). php-cs-fixer nie jest zainstalowany.
+- Dokumentacja: https://symfony.com/doc/current/. API zmienia się między wersjami, więc sprawdzaj w `vendor/` i przez `bin/console debug:*` zamiast polegać na pamięci.
 
-## Everyday workflow
+## Bezpieczeństwo operacji
 
-- Run the app with `symfony serve -d`, and commands with `symfony console ...`
-  (or `bin/console` when the Symfony CLI isn't available).
-- When something fails, read `var/log/dev.log` and the web profiler
-  (`/_profiler`) before changing code.
-- If `maker-bundle` is installed, prefer `bin/console make:*` with every argument
-  passed up front and `--no-interaction` where supported: makers prompt on a
-  terminal by default, which hangs a non-interactive shell. If a maker still
-  needs interactive input, hand-write the code instead.
-- If Doctrine ORM is installed, schema changes go through migrations
-  (`bin/console make:migration`, then `doctrine:migrations:migrate`), never
-  `doctrine:schema:update` or hand-written SQL.
-- `.env` is committed and holds defaults only. Real secrets belong in `.env.local`
-  (git-ignored) or the secrets vault (`bin/console secrets:set`), read via
-  `%env(...)%`.
+Bez wyraźnej zgody użytkownika **nie wykonuj**:
 
-## Testing
+- operacji destrukcyjnych: `docker compose down -v`, `docker volume rm`, `doctrine:database:drop`, `doctrine:schema:drop`, `git reset --hard`, `git clean`, usuwania gałęzi,
+- `git push` (w tym force push), merge ani żadnej publikacji projektu.
 
-Install `symfony/test-pack` if it isn't already. Functional/HTTP tests extend
-`WebTestCase`; service-level tests extend `KernelTestCase`. Run
-`php bin/phpunit` (falls back to `vendor/bin/phpunit`). A feature isn't done
-until it has a test that exercises it the way a caller would, an HTTP request for
-a controller or a service call for a service, not just "it didn't throw."
+Nie zapisuj sekretów w repozytorium, obrazie Docker ani logach.
 
-## Code style
+## Struktura
 
-Symfony's coding standard, the `@Symfony` php-cs-fixer ruleset (a PSR-12-derived
-superset). Run `vendor/bin/php-cs-fixer fix` if `friendsofphp/php-cs-fixer` is
-installed; it isn't part of the skeleton by default.
-
-## Discover, don't guess
-
-Framework APIs change between versions and your training data may be stale. Look
-things up in the project instead of relying on memory:
-
-- `bin/console about`: versions, environment, paths.
-- `bin/console debug:router`, `debug:container`, `debug:autowiring <name>`,
-  `debug:config <bundle>`, `config:dump-reference <bundle>`: what exists and how
-  it is configured.
-- `bin/console lint:container`, plus `lint:twig templates/` and
-  `lint:yaml config/` where those packages are installed: validate before running.
-- Read the installed source and docblocks under `vendor/`.
-- Docs: https://symfony.com/doc/current/ (switch to the version matching
-  `composer.json` if it differs).
+- `src/Shared/Infrastructure/Http/`: wspólne elementy HTTP (np. `/health`)
+- `tests/Unit/`, `tests/Functional/`: struktura katalogów odzwierciedla `src/`
+- `docker/frankenphp/`: konfiguracja serwera, PHP i entrypoint obrazu prod
+- `compose.yaml` (wspólny), `compose.override.yaml` (dev, porty tylko na localhost), `compose.prod.yaml` (prod, wymagane sekrety)
+- Mapowania Doctrine są rejestrowane per bounded context od Milestone 2 (`config/packages/doctrine.yaml`).
