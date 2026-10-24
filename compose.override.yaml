@@ -1,0 +1,24 @@
+# Development only (loaded automatically by `docker compose`).
+# Simplifications compared to the production image:
+# - the host checkout is bind-mounted into /app (code and vendor/),
+# - dependencies are installed explicitly with `make install`,
+# - the database port is published on the host.
+
+services:
+  php:
+    build:
+      context: .
+      target: frankenphp_dev
+    environment:
+      APP_ENV: dev
+    volumes:
+      - ./:/app
+      - ./frankenphp/Caddyfile:/etc/frankenphp/Caddyfile:ro
+      - ./frankenphp/conf.d/20-app.dev.ini:/usr/local/etc/php/app.conf.d/20-app.dev.ini:ro
+    tty: true
+
+  database:
+    ports:
+      - target: 5432
+        published: ${POSTGRES_PORT:-5432}
+        protocol: tcp
