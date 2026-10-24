@@ -53,15 +53,21 @@ FROM frankenphp_base AS frankenphp_prod
 
 ENV APP_ENV=prod
 
-# Non-secret default, override at runtime when needed.
-ENV DEFAULT_URI=http://localhost
+# Non-secret defaults, override at runtime when needed.
+# DATABASE_PASSWORD (and APP_SECRET) must be provided at runtime.
+ENV DEFAULT_URI=http://localhost \
+	DATABASE_HOST=database \
+	DATABASE_PORT=5432 \
+	DATABASE_NAME=app \
+	DATABASE_USER=app \
+	DATABASE_SERVER_VERSION=18
 
 RUN mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
 
 COPY --link docker/frankenphp/conf.d/20-app.prod.ini $PHP_INI_DIR/app.conf.d/
 COPY --link --chmod=755 docker/frankenphp/docker-entrypoint.prod.sh /usr/local/bin/docker-entrypoint
 
-# Validates the runtime configuration (APP_SECRET, DATABASE_URL) before starting.
+# Validates the runtime configuration (APP_SECRET, DATABASE_PASSWORD) before starting.
 ENTRYPOINT ["docker-entrypoint"]
 # Setting ENTRYPOINT resets the inherited CMD, so it has to be declared again.
 CMD ["frankenphp", "run", "--config", "/etc/frankenphp/Caddyfile"]
@@ -79,10 +85,9 @@ RUN set -eux; \
 	composer dump-autoload --classmap-authoritative --no-dev; \
 	# Only APP_ENV is compiled: .env defaults and secrets are not part of the image.
 	composer dump-env prod --empty; \
-	# Cache warmup resolves DATABASE_URL but never connects: a placeholder scoped
+	# Cache warmup resolves DATABASE_PASSWORD but never connects: a placeholder scoped
 	# to this command is enough and is not stored in the image environment.
-	DATABASE_URL="postgresql://build:build@localhost:5432/build?serverVersion=18&charset=utf8" \
-		composer run-script --no-dev post-install-cmd; \
+	DATABASE_PASSWORD=build-time-placeholder composer run-script --no-dev post-install-cmd; \
 	chmod +x bin/console; \
 	sync;
 

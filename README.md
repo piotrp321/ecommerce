@@ -62,7 +62,7 @@ Obraz nie zawiera sekretów ani wartości z `.env`. Konfigurację podaje się pr
 | Zmienna | Wymagana | Opis |
 |---|---|---|
 | `APP_SECRET` | tak | Co najmniej 32 znaki, np. `openssl rand -hex 32` |
-| `POSTGRES_PASSWORD` | tak | Hasło bazy, z niego składany jest `DATABASE_URL` |
+| `POSTGRES_PASSWORD` | tak | Hasło bazy, przekazywane aplikacji jako `DATABASE_PASSWORD` (dowolne znaki, bez kodowania URL) |
 | `SERVER_NAME` | nie | Domena serwera (domyślnie `localhost`) |
 
 ```bash
@@ -70,4 +70,4 @@ make build-prod
 APP_SECRET=… POSTGRES_PASSWORD=… docker compose -f compose.yaml -f compose.prod.yaml up --detach --wait
 ```
 
-Bez wymaganych zmiennych Compose odmawia startu. Uruchomiony bez Compose obraz sprawdza `APP_SECRET` i `DATABASE_URL` w entrypoincie i kończy działanie z błędem.
+Bez wymaganych zmiennych Compose odmawia startu. Uruchomiony bez Compose obraz sprawdza `APP_SECRET` i `DATABASE_PASSWORD` w entrypoincie i kończy działanie z błędem.
