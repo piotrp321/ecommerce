@@ -21,6 +21,7 @@ Wszystko uruchamiaj w kontenerze przez `make`. Nie używaj `symfony serve`, `sym
 - `make migrate`: migracje, wyłącznie tą komendą, nigdy automatycznie przy starcie kontenera
 - `make test`: PHPUnit (sam przygotowuje bazę testową przez `make db-test`)
 - `make stan`: PHPStan
+- `make arch`: kontrola architektury (Deptrac, `deptrac.yaml`); **obowiązkowa po każdej zmianie w `src/`**, jest też częścią `make check`
 - `make check`: **obowiązkowa bramka przed każdym commitem**
 - `make build-prod`: obraz produkcyjny; sekrety podaje się dopiero przy uruchomieniu (`compose.prod.yaml`)
 - `make check-prod`: kontrola obrazu prod w tymczasowym projekcie na portach 8080/8443; uruchamiaj po zmianach w `Dockerfile`, `compose*.yaml` lub `docker/`
@@ -37,6 +38,23 @@ Gdy coś nie działa, najpierw czytaj `var/log/`, logi kontenera (`make logs`) i
 - `declare(strict_types=1);` w każdym nowym pliku PHP.
 - Nie rozszerzaj zakresu ponad bieżący milestone. Pomysły zapisuj jako propozycje dla użytkownika.
 - Gdy wymaganie jest niejasne, zapytaj zamiast zgadywać.
+
+## Architektura
+
+Modularny monolit, DDD + architektura heksagonalna. Reguły wymusza Deptrac (`deptrac.yaml`, `make arch`).
+
+- Każda klasa w `src/` należy do `App\<Moduł>\<Warstwa>\…`:
+  - moduły: `Catalog`, `Cart`, `Ordering`, `Inventory` oraz `Shared`,
+  - warstwy: `Domain`, `Application`, `Infrastructure`.
+  Wyjątek: `App\Kernel`. Klasa poza tą strukturą kończy `make arch` błędem.
+- Kierunek zależności wewnątrz modułu: `Infrastructure` → `Application` → `Domain`.
+  - `Domain` zależy tylko od `Shared\Domain`.
+  - `Application` zależy od `Domain` swojego modułu oraz od `Shared\Domain` i `Shared\Application`.
+  - `Infrastructure` może używać wszystkich warstw swojego modułu i `Shared`.
+- `Domain` i `Application` nie używają HTTP (HttpFoundation, HttpKernel, Routing, kontrolery, PSR-7) ani persystencji (Doctrine DBAL, ORM, Migrations). Kontrolery, repozytoria Doctrine i inne adaptery są w `Infrastructure`. Mapowanie encji Doctrine też jest w `Infrastructure` (nie atrybuty ORM w klasach domeny).
+- Zależności między modułami są domyślnie zabronione. Nową zależność dodaje się świadomie w `ruleset` w `deptrac.yaml`, z uzasadnieniem w commicie, najlepiej tylko do warstwy `Application` drugiego modułu. Nigdy do jego `Domain` ani `Infrastructure`.
+- `Shared` tylko dla elementów rzeczywiście używanych przez kilka modułów (np. `Money`). `Shared` nie zależy od żadnego modułu.
+- Nie dodawaj `skip_violations` ani wyjątków w `deptrac.yaml`, żeby uciszyć naruszenie. Popraw kod albo zapytaj użytkownika o zmianę reguły.
 
 ## Konwencje Symfony
 
@@ -64,7 +82,7 @@ Nie zapisuj sekretów w repozytorium, obrazie Docker ani logach.
 
 ## Struktura
 
-- `src/Shared/Infrastructure/Http/`: wspólne elementy HTTP (np. `/health`)
+- `src/<Moduł>/<Warstwa>/`: kod aplikacji (patrz „Architektura”); obecnie tylko `src/Shared/Infrastructure/Http/` (`/health`)
 - `tests/Unit/`, `tests/Functional/`: struktura katalogów odzwierciedla `src/`
 - `docker/frankenphp/`: konfiguracja serwera, PHP i entrypoint obrazu prod
 - `compose.yaml` (wspólny, projekt dev `ecommerce`), `compose.override.yaml` (dev, porty tylko na localhost), `compose.prod.yaml` (osobny projekt `ecommerce-prod`, wymagane sekrety), `compose.prod-check.yaml` (tymczasowy projekt dla `make check-prod`)
