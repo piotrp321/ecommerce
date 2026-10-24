@@ -65,6 +65,8 @@ COPY --link --chmod=755 docker/frankenphp/docker-entrypoint.prod.sh /usr/local/b
 
 # Validates the runtime configuration (APP_SECRET, DATABASE_URL) before starting.
 ENTRYPOINT ["docker-entrypoint"]
+# Setting ENTRYPOINT resets the inherited CMD, so it has to be declared again.
+CMD ["frankenphp", "run", "--config", "/etc/frankenphp/Caddyfile"]
 
 # Prevent the reinstallation of vendors at every change in the source code
 COPY --link composer.* symfony.* ./
