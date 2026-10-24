@@ -1,0 +1,69 @@
+# Continuous integration. It reuses the project's Makefile and Compose files,
+# so CI runs exactly what developers run locally (see AGENTS.md).
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Read-only token: the workflow only needs to check out the code.
+permissions:
+  contents: read
+
+# A newer push to the same PR or branch cancels the run in progress.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality gates (make check)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the development images
+        run: make build
+
+      - name: Start PostgreSQL and the application
+        run: make up
+
+      - name: Install dependencies
+        run: make install
+
+      - name: Run database migrations
+        run: make migrate
+
+      # composer validate, lint:container, lint:yaml, PHPStan (level max) and
+      # PHPUnit; the test database is created and migrated by `make db-test`.
+      - name: Run all quality gates
+        run: make check
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=200
+
+      - name: Stop the containers
+        if: always()
+        run: make down
+
+  production-image:
+    name: Production image (make check-prod)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Builds the prod image without secrets, then runs it in an ephemeral
+      # project with one-time generated secrets (never real production values).
+      - name: Build and check the production image
+        run: make check-prod
