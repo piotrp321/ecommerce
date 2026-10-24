@@ -6,6 +6,10 @@
 # Ports are published by the environment files only (Compose merges port lists,
 # so a port published here could not be restricted to localhost in development).
 
+# Development project name. compose.prod.yaml sets its own name, so the two
+# environments never share containers, networks or volumes.
+name: ecommerce
+
 services:
   php:
     build:
