@@ -7,7 +7,7 @@ COMPOSER    = $(PHP_CONT) composer
 SYMFONY     = $(PHP) bin/console
 
 .DEFAULT_GOAL = help
-.PHONY: help build build-prod up down logs sh install composer console migrate db-test test stan check
+.PHONY: help build build-prod up down logs sh install composer console migrate db-test test stan check check-prod
 
 ## —— Help ———————————————————————————————————————————————————————————————————
 help: ## List available targets
@@ -64,3 +64,6 @@ check: ## Run all quality gates (required before every commit)
 	@$(SYMFONY) lint:yaml config --parse-tags
 	@$(MAKE) --no-print-directory stan
 	@$(MAKE) --no-print-directory test
+
+check-prod: build-prod ## Run the prod image in an ephemeral project (ports 8080/8443) and check it
+	@./docker/check-prod.sh
