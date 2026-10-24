@@ -46,12 +46,13 @@ console: ## Run bin/console, pass the arguments with c="...", e.g. make console 
 migrate: ## Run the database migrations (never executed automatically)
 	@$(SYMFONY) doctrine:migrations:migrate --no-interaction --allow-no-migration
 
-db-test: ## Create the test database if it does not exist
+db-test: ## Prepare the test database (create if missing, run migrations); idempotent
 	@$(SYMFONY) doctrine:database:create --if-not-exists --env=test
+	@$(SYMFONY) doctrine:migrations:migrate --no-interaction --allow-no-migration --env=test
 
 ## —— Quality ———————————————————————————————————————————————————————————————
-test: ## Run the PHPUnit test suites
-	@$(PHP_CONT) env APP_ENV=test php bin/phpunit
+test: db-test ## Run the PHPUnit test suites (prepares the test database first)
+	@$(PHP) bin/phpunit
 
 stan: ## Run PHPStan
 	@$(SYMFONY) cache:warmup --env=dev --quiet
