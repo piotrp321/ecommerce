@@ -95,6 +95,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Buildx (docker-container builder)
+        id: buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Expose the Actions cache to Buildx
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -104,9 +105,13 @@ jobs:
             for (const name of ['ACTIONS_RUNTIME_TOKEN', 'ACTIONS_RESULTS_URL', 'ACTIONS_CACHE_URL', 'ACTIONS_CACHE_SERVICE_V2']) {
               if (process.env[name]) core.exportVariable(name, process.env[name]);
             }
+      # Name the builder explicitly: without it `docker build` failed at once in CI,
+      # most likely on the default docker driver, which cannot export a cache.
       # --load: the docker-container builder keeps images to itself; check-prod
       # needs the image in the local Docker engine.
       - name: Build the production image
+        env:
+          BUILDX_BUILDER: ${{ steps.buildx.outputs.name }}
         run: >-
           make build-prod BUILD_PROD_FLAGS="--load
           --cache-from type=gha,scope=prod
