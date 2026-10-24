@@ -46,6 +46,7 @@ Stan aplikacji i bazy: https://localhost/health
 | `make db-test` | Przygotowanie bazy testowej `app_test` (idempotentne) |
 | `make test` | PHPUnit (suity `unit` i `functional`), najpierw `make db-test` |
 | `make stan` | PHPStan, poziom `max` |
+| `make arch` | Kontrola architektury DDD/Hexagonal (Deptrac, zasady w `AGENTS.md`) |
 | `make check` | Wszystkie bramki jakości: obowiązkowe przed commitem |
 | `make check-prod` | Kontrola obrazu produkcyjnego w tymczasowym projekcie (porty 8080/8443) |
 
@@ -53,7 +54,7 @@ Stan aplikacji i bazy: https://localhost/health
 
 GitHub Actions (`.github/workflows/ci.yml`) uruchamia się dla każdego Pull Requesta do `main` i po pushu na `main`, na runnerze `ubuntu-24.04`, z tokenem tylko do odczytu. Używa tych samych komend co lokalnie:
 
-- **Quality gates:** `make build`, `make up`, `make install`, `make migrate`, `make check` (composer validate, lint, PHPStan max, PHPUnit z przygotowaniem bazy testowej),
+- **Quality gates:** `make build`, `make up`, `make install`, `make migrate`, `make check` (composer validate, lint, Deptrac, PHPStan max, PHPUnit z przygotowaniem bazy testowej),
 - **Production image:** `make check-prod` (obraz prod z jednorazowymi, generowanymi sekretami).
 
 Workflow nie korzysta z żadnych sekretów repozytorium.
