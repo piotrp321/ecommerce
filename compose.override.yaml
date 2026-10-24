@@ -1,22 +1,21 @@
 # Development only (loaded automatically by `docker compose`).
 # Simplifications compared to the production image:
-# - the host checkout is bind-mounted into /app (code and vendor/),
-# - dependencies are installed explicitly with `make install`,
+# - apps/backend is bind-mounted into /app (code, vendor/ and var/),
+# - dependencies are installed explicitly with `make backend-install`,
 # - the database port is published on the host.
 # All ports are bound to 127.0.0.1 only, so they are not reachable from the network.
 
 services:
-  php:
-    image: ${IMAGES_PREFIX:-}ecommerce-php-dev
+  backend:
+    image: ${IMAGES_PREFIX:-}ecommerce-backend-dev
     build:
-      context: .
       target: frankenphp_dev
     environment:
       APP_ENV: dev
     volumes:
-      - ./:/app
-      - ./docker/frankenphp/Caddyfile:/etc/frankenphp/Caddyfile:ro
-      - ./docker/frankenphp/conf.d/20-app.dev.ini:/usr/local/etc/php/app.conf.d/20-app.dev.ini:ro
+      - ./apps/backend:/app
+      - ./infra/docker/backend/Caddyfile:/etc/frankenphp/Caddyfile:ro
+      - ./infra/docker/backend/conf.d/20-app.dev.ini:/usr/local/etc/php/app.conf.d/20-app.dev.ini:ro
     ports:
       - target: 80
         host_ip: 127.0.0.1

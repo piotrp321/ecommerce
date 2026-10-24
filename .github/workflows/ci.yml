@@ -28,20 +28,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Build the development images
-        run: make build
+      # Exactly the fresh-clone setup documented in README: build the dev images,
+      # start PostgreSQL and the backend, install dependencies, run migrations.
+      - name: Bootstrap the development environment
+        run: make bootstrap
 
-      - name: Start PostgreSQL and the application
-        run: make up
-
-      - name: Install dependencies
-        run: make install
-
-      - name: Run database migrations
-        run: make migrate
-
-      # composer validate, lint:container, lint:yaml, PHPStan (level max) and
-      # PHPUnit; the test database is created and migrated by `make db-test`.
+      # Backend: composer validate, lint:container, lint:yaml, Deptrac, PHPStan
+      # (level max) and PHPUnit (test database prepared by make backend-db-test).
       - name: Run all quality gates
         run: make check
 
@@ -63,7 +56,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # Builds the prod image without secrets, then runs it in an ephemeral
+      # Builds the prod images without secrets, then runs them in an ephemeral
       # project with one-time generated secrets (never real production values).
-      - name: Build and check the production image
+      - name: Build and check the production images
         run: make check-prod

@@ -1,0 +1,22 @@
+# Build context of the backend image is the repository root; this file (next to
+# the Dockerfile, picked up by BuildKit) restricts it to an allowlist.
+# Everything else (other apps, local tooling such as .claude/, .env* files, tests,
+# docs, vendor/, var/) never reaches the image. Add new paths here deliberately.
+*
+
+!apps/backend/bin/
+!apps/backend/config/
+!apps/backend/migrations/
+!apps/backend/public/
+!apps/backend/src/
+!apps/backend/composer.json
+!apps/backend/composer.lock
+!apps/backend/symfony.lock
+!infra/docker/backend/
+
+# Never ship the production decryption key; provide it at runtime instead.
+apps/backend/config/secrets/*/*.decrypt.private.php
+apps/backend/public/bundles/
+infra/docker/backend/Dockerfile*
+**/.DS_Store
+**/.gitignore

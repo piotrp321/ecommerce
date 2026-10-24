@@ -1,12 +1,12 @@
-# Ephemeral production check, used by `make check-prod` (docker/check-prod.sh):
-# docker compose -f compose.yaml -f compose.prod.yaml -f compose.prod-check.yaml ...
+# Ephemeral production check, used by `make check-prod` (infra/scripts/check-prod.sh):
+# docker compose -f compose.yaml -f compose.prod.yaml -f infra/scripts/compose.prod-check.yaml ...
 # Its own project, alternative ports and tmpfs storage: it can run next to the dev
 # project and leaves no persistent volumes behind, so cleaning up never deletes data.
 
 name: ecommerce-prod-check
 
 services:
-  php:
+  backend:
     volumes: !reset []
 
   database:

@@ -1,76 +1,89 @@
-# Development commands. None of the targets removes volumes or data.
+# Monorepo commands. Convention:
+# - aggregate targets without a prefix (bootstrap, up, check, check-prod...),
+# - per-application targets prefixed with the app name (backend-*; later store-*, admin-*).
+# None of the targets removes volumes or data.
 
 DOCKER_COMP = docker compose
-PHP_CONT    = $(DOCKER_COMP) exec php
-PHP         = $(PHP_CONT) php
-COMPOSER    = $(PHP_CONT) composer
+BACKEND     = $(DOCKER_COMP) exec backend
+PHP         = $(BACKEND) php
+COMPOSER    = $(BACKEND) composer
 SYMFONY     = $(PHP) bin/console
 
 .DEFAULT_GOAL = help
-.PHONY: help build build-prod up down logs sh install composer console migrate db-test test stan arch check check-prod
+.PHONY: help bootstrap build up down logs install check build-prod check-prod \
+	backend-sh backend-install backend-composer backend-console backend-migrate backend-db-test \
+	backend-test backend-stan backend-arch backend-check backend-build-prod backend-check-prod
 
 ## —— Help ———————————————————————————————————————————————————————————————————
 help: ## List available targets
-	@grep -E '(^[a-zA-Z0-9_-]+:.*?##.*$$)|(^##)' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}{printf "\033[32m%-12s\033[0m %s\n", $$1, $$2}' | sed -e 's/\[32m##/[33m/'
+	@grep -E '(^[a-zA-Z0-9_-]+:.*?##.*$$)|(^##)' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}{printf "\033[32m%-20s\033[0m %s\n", $$1, $$2}' | sed -e 's/\[32m##/[33m/'
 
-## —— Docker —————————————————————————————————————————————————————————————————
+## —— Monorepo ———————————————————————————————————————————————————————————————
+bootstrap: build up install backend-migrate ## Set up the dev environment from a fresh clone
+
 build: ## Build the dev images
 	@$(DOCKER_COMP) build --pull
 
-build-prod: ## Build the production image (dependencies installed during the build, no secrets needed)
-	@docker build --pull --target frankenphp_prod --tag $(IMAGES_PREFIX)ecommerce-php .
+up: ## Start the dev containers in detached mode
+	@$(DOCKER_COMP) up --detach --wait --remove-orphans
 
-up: ## Start the containers in detached mode
-	@$(DOCKER_COMP) up --detach --wait
-
-down: ## Stop and remove the containers (volumes are kept)
+down: ## Stop and remove the dev containers (volumes are kept)
 	@$(DOCKER_COMP) down --remove-orphans
 
 logs: ## Follow the container logs
 	@$(DOCKER_COMP) logs --tail=100 --follow
 
-sh: ## Open a shell in the php container
-	@$(PHP_CONT) sh
+install: backend-install ## Install the dependencies of all applications (dev)
 
-## —— Composer / Symfony ————————————————————————————————————————————————————
-install: ## Install dependencies, including dev ones (dev only)
+check: backend-check ## Run all quality gates (required before every commit)
+
+build-prod: backend-build-prod ## Build all production images
+
+check-prod: backend-check-prod ## Check all production images in an ephemeral project (ports 8080/8443)
+
+## —— Backend (apps/backend, Symfony) ———————————————————————————————————————
+backend-sh: ## Open a shell in the backend container
+	@$(BACKEND) sh
+
+backend-install: ## Install the backend dependencies, including dev ones (dev only)
 	@$(COMPOSER) install --prefer-dist --no-progress --no-interaction
 
-composer: ## Run composer, pass the arguments with c="...", e.g. make composer c="require foo/bar"
+backend-composer: ## Run composer, e.g. make backend-composer c="require foo/bar"
 	@$(COMPOSER) $(c)
 
-console: ## Run bin/console, pass the arguments with c="...", e.g. make console c=about
+backend-console: ## Run bin/console, e.g. make backend-console c=about
 	@$(SYMFONY) $(c)
 
-## —— Database ——————————————————————————————————————————————————————————————
-migrate: ## Run the database migrations (never executed automatically)
+backend-migrate: ## Run the database migrations (never executed automatically)
 	@$(SYMFONY) doctrine:migrations:migrate --no-interaction --allow-no-migration
 
-db-test: ## Prepare the test database (create if missing, run migrations); idempotent
+backend-db-test: ## Prepare the test database (create if missing, run migrations); idempotent
 	@$(SYMFONY) doctrine:database:create --if-not-exists --env=test
 	@$(SYMFONY) doctrine:migrations:migrate --no-interaction --allow-no-migration --env=test
 
-## —— Quality ———————————————————————————————————————————————————————————————
-test: db-test ## Run the PHPUnit test suites (prepares the test database first)
+backend-test: backend-db-test ## Run PHPUnit (prepares the test database first)
 	@$(PHP) bin/phpunit
 
-stan: ## Run PHPStan
+backend-stan: ## Run PHPStan (level max)
 	@$(SYMFONY) cache:warmup --env=dev --quiet
 	@$(PHP) vendor/bin/phpstan analyse --memory-limit=1G --no-progress
 
-arch: ## Check the architecture rules (Deptrac, deptrac.yaml)
+backend-arch: ## Check the architecture rules (Deptrac, apps/backend/deptrac.yaml)
 	@$(PHP) vendor/bin/deptrac analyse --no-progress
 	@out="$$($(PHP) vendor/bin/deptrac debug:unassigned)"; echo "$$out"; \
 		echo "$$out" | grep -q 'There are no unassigned tokens' \
-		|| { echo "Classes above are outside App\\<Module>\\<Layer>\\ (see deptrac.yaml)."; exit 1; }
+		|| { echo "Classes above are outside App\\<Module>\\<Layer>\\ (see apps/backend/deptrac.yaml)."; exit 1; }
 
-check: ## Run all quality gates (required before every commit)
+backend-check: ## Run the backend quality gates (validation, Deptrac, PHPStan, PHPUnit)
 	@$(COMPOSER) validate --strict
 	@$(SYMFONY) lint:container
 	@$(SYMFONY) lint:yaml config --parse-tags
-	@$(MAKE) --no-print-directory arch
-	@$(MAKE) --no-print-directory stan
-	@$(MAKE) --no-print-directory test
+	@$(MAKE) --no-print-directory backend-arch
+	@$(MAKE) --no-print-directory backend-stan
+	@$(MAKE) --no-print-directory backend-test
 
-check-prod: build-prod ## Run the prod image in an ephemeral project (ports 8080/8443) and check it
-	@./docker/check-prod.sh
+backend-build-prod: ## Build the backend production image (dependencies installed during the build, no secrets)
+	@docker build --pull --file infra/docker/backend/Dockerfile --target frankenphp_prod --tag $(IMAGES_PREFIX)ecommerce-backend .
+
+backend-check-prod: backend-build-prod ## Run the backend prod image in an ephemeral project and check it
+	@./infra/scripts/check-prod.sh

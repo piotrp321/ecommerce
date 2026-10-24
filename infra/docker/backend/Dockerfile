@@ -1,4 +1,6 @@
 #syntax=docker/dockerfile:1
+# Backend (Symfony) image. Build context: repository root, restricted by
+# Dockerfile.dockerignore to apps/backend and infra/docker/backend.
 
 # Versions
 FROM dunglas/frankenphp:1.13-php8.5-trixie AS frankenphp_upstream
@@ -6,7 +8,7 @@ FROM composer:2 AS composer_upstream
 
 # Base image shared by the prod and dev stages.
 # The container only runs the web server: it never installs dependencies
-# nor runs database migrations on start (use `make install` / `make migrate`).
+# nor runs database migrations on start (use `make backend-install` / `make backend-migrate`).
 FROM frankenphp_upstream AS frankenphp_base
 
 WORKDIR /app
@@ -28,8 +30,8 @@ RUN set -eux; \
 ENV COMPOSER_ALLOW_SUPERUSER=1
 
 COPY --link --from=composer_upstream /usr/bin/composer /usr/local/bin/composer
-COPY --link docker/frankenphp/conf.d/10-app.ini $PHP_INI_DIR/app.conf.d/
-COPY --link docker/frankenphp/Caddyfile /etc/frankenphp/Caddyfile
+COPY --link infra/docker/backend/conf.d/10-app.ini $PHP_INI_DIR/app.conf.d/
+COPY --link infra/docker/backend/Caddyfile /etc/frankenphp/Caddyfile
 
 ENV PHP_INI_SCAN_DIR=":$PHP_INI_DIR/app.conf.d"
 
@@ -39,14 +41,14 @@ CMD ["frankenphp", "run", "--config", "/etc/frankenphp/Caddyfile"]
 
 # Dev image (development-only simplification):
 # the code and vendor/ come from a bind mount of the host checkout,
-# and dependencies (including dev ones) are installed explicitly with `make install`.
+# and dependencies (including dev ones) are installed explicitly with `make backend-install`.
 FROM frankenphp_base AS frankenphp_dev
 
 ENV APP_ENV=dev
 
 RUN mv "$PHP_INI_DIR/php.ini-development" "$PHP_INI_DIR/php.ini"
 
-COPY --link docker/frankenphp/conf.d/20-app.dev.ini $PHP_INI_DIR/app.conf.d/
+COPY --link infra/docker/backend/conf.d/20-app.dev.ini $PHP_INI_DIR/app.conf.d/
 
 # Prod image: production dependencies are installed while building the image.
 FROM frankenphp_base AS frankenphp_prod
@@ -64,8 +66,8 @@ ENV DEFAULT_URI=http://localhost \
 
 RUN mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
 
-COPY --link docker/frankenphp/conf.d/20-app.prod.ini $PHP_INI_DIR/app.conf.d/
-COPY --link --chmod=755 docker/frankenphp/docker-entrypoint.prod.sh /usr/local/bin/docker-entrypoint
+COPY --link infra/docker/backend/conf.d/20-app.prod.ini $PHP_INI_DIR/app.conf.d/
+COPY --link --chmod=755 infra/docker/backend/docker-entrypoint.prod.sh /usr/local/bin/docker-entrypoint
 
 # Validates the runtime configuration (APP_SECRET, DATABASE_PASSWORD) before starting.
 ENTRYPOINT ["docker-entrypoint"]
@@ -73,12 +75,12 @@ ENTRYPOINT ["docker-entrypoint"]
 CMD ["frankenphp", "run", "--config", "/etc/frankenphp/Caddyfile"]
 
 # Prevent the reinstallation of vendors at every change in the source code
-COPY --link composer.* symfony.* ./
+COPY --link apps/backend/composer.* apps/backend/symfony.* ./
 RUN set -eux; \
 	composer install --no-cache --prefer-dist --no-dev --no-autoloader --no-scripts --no-progress
 
 # Copy sources
-COPY --link . ./
+COPY --link apps/backend/ ./
 
 RUN set -eux; \
 	mkdir -p var/cache var/log; \
