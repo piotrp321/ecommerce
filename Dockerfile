@@ -30,8 +30,8 @@ RUN set -eux; \
 ENV COMPOSER_ALLOW_SUPERUSER=1
 
 COPY --link --from=composer_upstream /usr/bin/composer /usr/local/bin/composer
-COPY --link frankenphp/conf.d/10-app.ini $PHP_INI_DIR/app.conf.d/
-COPY --link frankenphp/Caddyfile /etc/frankenphp/Caddyfile
+COPY --link docker/frankenphp/conf.d/10-app.ini $PHP_INI_DIR/app.conf.d/
+COPY --link docker/frankenphp/Caddyfile /etc/frankenphp/Caddyfile
 
 ENV PHP_INI_SCAN_DIR=":$PHP_INI_DIR/app.conf.d"
 
@@ -48,7 +48,7 @@ ENV APP_ENV=dev
 
 RUN mv "$PHP_INI_DIR/php.ini-development" "$PHP_INI_DIR/php.ini"
 
-COPY --link frankenphp/conf.d/20-app.dev.ini $PHP_INI_DIR/app.conf.d/
+COPY --link docker/frankenphp/conf.d/20-app.dev.ini $PHP_INI_DIR/app.conf.d/
 
 # Prod image: production dependencies are installed while building the image.
 FROM frankenphp_base AS frankenphp_prod
@@ -57,7 +57,7 @@ ENV APP_ENV=prod
 
 RUN mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
 
-COPY --link frankenphp/conf.d/20-app.prod.ini $PHP_INI_DIR/app.conf.d/
+COPY --link docker/frankenphp/conf.d/20-app.prod.ini $PHP_INI_DIR/app.conf.d/
 
 # Prevent the reinstallation of vendors at every change in the source code
 COPY --link composer.* symfony.* ./
