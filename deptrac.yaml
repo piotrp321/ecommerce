@@ -1,0 +1,158 @@
+# Architecture rules (DDD + Hexagonal, modular monolith). Run: make arch
+# See AGENTS.md ("Architektura") for the rationale.
+#
+# Every class in src/ must belong to a layer: App\<Module>\<Layer>\..., where
+# Module is Catalog, Cart, Ordering, Inventory or Shared and Layer is Domain,
+# Application or Infrastructure. `make arch` also fails on unassigned classes.
+deptrac:
+  paths:
+    - ./src
+  cache_file: ./var/cache/.deptrac.cache
+
+  layers:
+    - name: Catalog_Domain
+      collectors:
+        - type: classNameRegex
+          value: '#^App\\Catalog\\Domain\\#'
+    - name: Catalog_Application
+      collectors:
+        - type: classNameRegex
+          value: '#^App\\Catalog\\Application\\#'
+    - name: Catalog_Infrastructure
+      collectors:
+        - type: classNameRegex
+          value: '#^App\\Catalog\\Infrastructure\\#'
+    - name: Cart_Domain
+      collectors:
+        - type: classNameRegex
+          value: '#^App\\Cart\\Domain\\#'
+    - name: Cart_Application
+      collectors:
+        - type: classNameRegex
+          value: '#^App\\Cart\\Application\\#'
+    - name: Cart_Infrastructure
+      collectors:
+        - type: classNameRegex
+          value: '#^App\\Cart\\Infrastructure\\#'
+    - name: Ordering_Domain
+      collectors:
+        - type: classNameRegex
+          value: '#^App\\Ordering\\Domain\\#'
+    - name: Ordering_Application
+      collectors:
+        - type: classNameRegex
+          value: '#^App\\Ordering\\Application\\#'
+    - name: Ordering_Infrastructure
+      collectors:
+        - type: classNameRegex
+          value: '#^App\\Ordering\\Infrastructure\\#'
+    - name: Inventory_Domain
+      collectors:
+        - type: classNameRegex
+          value: '#^App\\Inventory\\Domain\\#'
+    - name: Inventory_Application
+      collectors:
+        - type: classNameRegex
+          value: '#^App\\Inventory\\Application\\#'
+    - name: Inventory_Infrastructure
+      collectors:
+        - type: classNameRegex
+          value: '#^App\\Inventory\\Infrastructure\\#'
+    - name: Shared_Domain
+      collectors:
+        - type: classNameRegex
+          value: '#^App\\Shared\\Domain\\#'
+    - name: Shared_Application
+      collectors:
+        - type: classNameRegex
+          value: '#^App\\Shared\\Application\\#'
+    - name: Shared_Infrastructure
+      collectors:
+        - type: classNameRegex
+          value: '#^App\\Shared\\Infrastructure\\#'
+    # Symfony kernel: framework bootstrap, outside the modules.
+    - name: Bootstrap
+      collectors:
+        - type: classNameRegex
+          value: '#^App\\Kernel$#'
+
+    # Framework/vendor adapters that the core (Domain, Application) must not touch.
+    - name: Http
+      collectors:
+        - type: classNameRegex
+          value: '#^(Symfony\\Component\\(HttpFoundation|HttpKernel|Routing)|Symfony\\Bundle\\FrameworkBundle\\Controller|Psr\\Http)\\#'
+    - name: Persistence
+      collectors:
+        - type: classNameRegex
+          value: '#^(Doctrine\\(DBAL|ORM|Persistence|Migrations)|Doctrine\\Bundle)\\#'
+
+  # Allowed dependencies. Anything not listed is a violation, including any
+  # dependency between modules: a cross-module dependency must be added here
+  # deliberately (preferably to the other module's Application layer only).
+  ruleset:
+    Catalog_Domain:
+      - Shared_Domain
+    Catalog_Application:
+      - Catalog_Domain
+      - Shared_Domain
+      - Shared_Application
+    Catalog_Infrastructure:
+      - Catalog_Domain
+      - Catalog_Application
+      - Shared_Domain
+      - Shared_Application
+      - Shared_Infrastructure
+      - Http
+      - Persistence
+    Cart_Domain:
+      - Shared_Domain
+    Cart_Application:
+      - Cart_Domain
+      - Shared_Domain
+      - Shared_Application
+    Cart_Infrastructure:
+      - Cart_Domain
+      - Cart_Application
+      - Shared_Domain
+      - Shared_Application
+      - Shared_Infrastructure
+      - Http
+      - Persistence
+    Ordering_Domain:
+      - Shared_Domain
+    Ordering_Application:
+      - Ordering_Domain
+      - Shared_Domain
+      - Shared_Application
+    Ordering_Infrastructure:
+      - Ordering_Domain
+      - Ordering_Application
+      - Shared_Domain
+      - Shared_Application
+      - Shared_Infrastructure
+      - Http
+      - Persistence
+    Inventory_Domain:
+      - Shared_Domain
+    Inventory_Application:
+      - Inventory_Domain
+      - Shared_Domain
+      - Shared_Application
+    Inventory_Infrastructure:
+      - Inventory_Domain
+      - Inventory_Application
+      - Shared_Domain
+      - Shared_Application
+      - Shared_Infrastructure
+      - Http
+      - Persistence
+    Shared_Domain: ~
+    Shared_Application:
+      - Shared_Domain
+    Shared_Infrastructure:
+      - Shared_Domain
+      - Shared_Application
+      - Http
+      - Persistence
+    Bootstrap:
+      - Http

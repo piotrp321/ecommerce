@@ -73,6 +73,7 @@
         }
     },
     "require-dev": {
+        "deptrac/deptrac": "^4.7",
         "phpstan/extension-installer": "^1.4",
         "phpstan/phpstan": "^2.3",
         "phpstan/phpstan-doctrine": "^2.0",
