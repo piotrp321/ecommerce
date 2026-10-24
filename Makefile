@@ -7,7 +7,7 @@ COMPOSER    = $(PHP_CONT) composer
 SYMFONY     = $(PHP) bin/console
 
 .DEFAULT_GOAL = help
-.PHONY: help build build-prod up down logs sh install composer console migrate db-test test stan check check-prod
+.PHONY: help build build-prod up down logs sh install composer console migrate db-test test stan arch check check-prod
 
 ## —— Help ———————————————————————————————————————————————————————————————————
 help: ## List available targets
@@ -58,10 +58,17 @@ stan: ## Run PHPStan
 	@$(SYMFONY) cache:warmup --env=dev --quiet
 	@$(PHP) vendor/bin/phpstan analyse --memory-limit=1G --no-progress
 
+arch: ## Check the architecture rules (Deptrac, deptrac.yaml)
+	@$(PHP) vendor/bin/deptrac analyse --no-progress
+	@out="$$($(PHP) vendor/bin/deptrac debug:unassigned)"; echo "$$out"; \
+		echo "$$out" | grep -q 'There are no unassigned tokens' \
+		|| { echo "Classes above are outside App\\<Module>\\<Layer>\\ (see deptrac.yaml)."; exit 1; }
+
 check: ## Run all quality gates (required before every commit)
 	@$(COMPOSER) validate --strict
 	@$(SYMFONY) lint:container
 	@$(SYMFONY) lint:yaml config --parse-tags
+	@$(MAKE) --no-print-directory arch
 	@$(MAKE) --no-print-directory stan
 	@$(MAKE) --no-print-directory test
 
