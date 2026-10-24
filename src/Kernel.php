@@ -5,6 +5,7 @@ namespace App;
 use Symfony\Bundle\FrameworkBundle\Kernel\MicroKernelTrait;
 use Symfony\Component\HttpKernel\Kernel as BaseKernel;
 
+// CI cache experiment: source-only change.
 class Kernel extends BaseKernel
 {
     use MicroKernelTrait;
