@@ -6,6 +6,7 @@
 
 services:
   php:
+    image: ${IMAGES_PREFIX:-}ecommerce-php-dev
     build:
       context: .
       target: frankenphp_dev
