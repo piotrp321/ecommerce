@@ -12,7 +12,6 @@
 !composer.json
 !composer.lock
 !symfony.lock
-!.env
 
 # Never ship the production decryption key; provide it at runtime instead.
 config/secrets/*/*.decrypt.private.php

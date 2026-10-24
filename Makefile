@@ -17,8 +17,8 @@ help: ## List available targets
 build: ## Build the dev images
 	@$(DOCKER_COMP) build --pull
 
-build-prod: ## Build the production image (dependencies installed during the build)
-	@$(DOCKER_COMP) -f compose.yaml build --pull
+build-prod: ## Build the production image (dependencies installed during the build, no secrets needed)
+	@docker build --pull --target frankenphp_prod --tag $(IMAGES_PREFIX)ecommerce-php .
 
 up: ## Start the containers in detached mode
 	@$(DOCKER_COMP) up --detach --wait

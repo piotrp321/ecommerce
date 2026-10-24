@@ -1,0 +1,17 @@
+# Production: docker compose -f compose.yaml -f compose.prod.yaml up --wait
+# Secrets are provided at runtime through the environment, never stored in the image
+# or in the repository. Compose refuses to start when a required value is missing,
+# and the image entrypoint validates them again when run without Compose.
+
+services:
+  php:
+    image: ${IMAGES_PREFIX:-}ecommerce-php
+    build:
+      target: frankenphp_prod
+    environment:
+      APP_SECRET: ${APP_SECRET:?APP_SECRET must be set (at least 32 characters)}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@database:5432/${POSTGRES_DB:-app}?serverVersion=${POSTGRES_VERSION:-18}&charset=${POSTGRES_CHARSET:-utf8}
+
+  database:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}

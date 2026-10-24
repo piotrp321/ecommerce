@@ -55,9 +55,16 @@ FROM frankenphp_base AS frankenphp_prod
 
 ENV APP_ENV=prod
 
+# Non-secret default, override at runtime when needed.
+ENV DEFAULT_URI=http://localhost
+
 RUN mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
 
 COPY --link docker/frankenphp/conf.d/20-app.prod.ini $PHP_INI_DIR/app.conf.d/
+COPY --link --chmod=755 docker/frankenphp/docker-entrypoint.prod.sh /usr/local/bin/docker-entrypoint
+
+# Validates the runtime configuration (APP_SECRET, DATABASE_URL) before starting.
+ENTRYPOINT ["docker-entrypoint"]
 
 # Prevent the reinstallation of vendors at every change in the source code
 COPY --link composer.* symfony.* ./
@@ -70,7 +77,11 @@ COPY --link . ./
 RUN set -eux; \
 	mkdir -p var/cache var/log; \
 	composer dump-autoload --classmap-authoritative --no-dev; \
-	composer dump-env prod; \
-	composer run-script --no-dev post-install-cmd; \
+	# Only APP_ENV is compiled: .env defaults and secrets are not part of the image.
+	composer dump-env prod --empty; \
+	# Cache warmup resolves DATABASE_URL but never connects: a placeholder scoped
+	# to this command is enough and is not stored in the image environment.
+	DATABASE_URL="postgresql://build:build@localhost:5432/build?serverVersion=18&charset=utf8" \
+		composer run-script --no-dev post-install-cmd; \
 	chmod +x bin/console; \
 	sync;
