@@ -6,17 +6,13 @@ import { DemoNotice } from '@/components/layout/demo-notice';
 import { SiteFooter } from '@/components/layout/site-footer';
 import { SiteHeader } from '@/components/layout/site-header';
 import './globals.css';
+import { siteMetadata } from './site-metadata';
 
 // Self-hosted by next/font (downloaded at build time, no requests to Google at runtime).
 const sans = Geist({ subsets: ['latin', 'latin-ext'], variable: '--font-geist-sans' });
 const display = Instrument_Serif({ subsets: ['latin', 'latin-ext'], weight: '400', variable: '--font-instrument-serif' });
 
-export const metadata: Metadata = {
-  title: { default: 'Sklep', template: '%s · Sklep' },
-  description: 'Sklep internetowy: elektronika, dom i wnętrze, kuchnia i akcesoria.',
-  // Sample data must not end up in search engines as a real catalog.
-  ...(catalog.isDemo ? { robots: { index: false, follow: false } } : {}),
-};
+export const metadata: Metadata = siteMetadata(catalog.isDemo);
 
 export const viewport: Viewport = {
   themeColor: '#faf9f6',
