@@ -2,6 +2,7 @@
 # - aggregate targets without a prefix (bootstrap, up, check, check-prod...),
 # - per-application targets prefixed with the app name (backend-*, admin-*, store-*, edge-*),
 # - the whole production topology prefixed with stack-,
+# - the API contract (docs/api/openapi.yaml) prefixed with contract-,
 # - pnpm workspace targets prefixed with pnpm-.
 # None of the targets removes volumes or data.
 
@@ -21,7 +22,7 @@ PNPM        = $(DOCKER_COMP) run --rm --no-deps admin pnpm
 	backend-test backend-stan backend-arch backend-check backend-build-prod \
 	admin-lint admin-typecheck admin-test admin-build admin-check admin-build-prod admin-check-prod \
 	store-lint store-typecheck store-test store-build store-check store-build-prod store-check-prod \
-	edge-build-prod stack-check-prod
+	edge-build-prod stack-check-prod contract-lint
 
 ## —— Help ———————————————————————————————————————————————————————————————————
 help: ## List available targets
@@ -44,7 +45,7 @@ logs: ## Follow the container logs
 
 install: pnpm-install backend-install ## Install the dependencies of all applications (dev; backend needs `make up`)
 
-check: backend-check admin-check store-check ## Run all quality gates (required before every commit)
+check: contract-lint backend-check admin-check store-check ## Run all quality gates (required before every commit)
 
 build-prod: backend-build-prod admin-build-prod store-build-prod edge-build-prod ## Build all production images
 
@@ -152,3 +153,7 @@ edge-build-prod: ## Build the edge proxy image (Caddy, configuration baked in)
 
 stack-check-prod: backend-build-prod admin-build-prod store-build-prod edge-build-prod ## Run the whole prod topology in an ephemeral project (edge 8080/8443) and check it
 	@./infra/scripts/check-prod-stack.sh
+
+## —— API contract (docs/api/openapi.yaml) ————————————————————————————————————
+contract-lint: ## Lint the OpenAPI contract (Redocly, recommended-strict, redocly.yaml)
+	@$(DOCKER_COMP) run --rm --no-deps -e REDOCLY_TELEMETRY=off -e REDOCLY_SUPPRESS_UPDATE_NOTICE=true admin pnpm exec redocly lint main

@@ -1,0 +1,7 @@
+# Deliberate exceptions to redocly.yaml; each entry needs a reason.
+docs/api/openapi.yaml:
+  operation-4xx-response:
+    # GET /catalog/categories has no parameters and no failure mode other than 5xx.
+    - '#/paths/~1catalog~1categories/get/responses'
+    # GET /health has no parameters; it answers 200 or 503 only.
+    - '#/paths/~1health/get/responses'
