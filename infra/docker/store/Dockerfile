@@ -26,7 +26,9 @@ ENV npm_config_store_dir=/workspace/node_modules/.pnpm-store
 
 EXPOSE 3000
 
-HEALTHCHECK --start-period=60s CMD node -e "fetch('http://127.0.0.1:3000/').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+# Liveness of the Next.js process only (/healthz renders no page and never calls the
+# backend), so an unavailable or unmigrated backend does not make the store unhealthy.
+HEALTHCHECK --start-period=60s CMD node -e "fetch('http://127.0.0.1:3000/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
 
 CMD ["pnpm", "--filter", "store", "dev", "--hostname", "0.0.0.0", "--port", "3000"]
 
@@ -70,6 +72,6 @@ USER node
 
 EXPOSE 3000
 
-HEALTHCHECK --start-period=20s CMD node -e "fetch('http://127.0.0.1:3000/').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+HEALTHCHECK --start-period=20s CMD node -e "fetch('http://127.0.0.1:3000/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
 
 CMD ["node", "apps/store/server.js"]
