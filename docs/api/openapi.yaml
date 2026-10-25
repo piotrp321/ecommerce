@@ -2,6 +2,8 @@ openapi: 3.1.0
 info:
   title: E-commerce API
   version: 0.1.0
+  license:
+    name: Proprietary
   description: |
     Shared contract of the backend (apps/backend) for the store and the admin panel.
 
@@ -35,15 +37,40 @@ servers:
 
 tags:
   - name: Catalog (public)
+    description: Read-only catalog for the store; only active products.
   - name: Catalog (admin)
+    description: Product and category management; requires the administrator token.
   - name: Inventory (admin)
+    description: Stock quantities; requires the administrator token.
+  - name: Operations
+    description: Technical endpoints (monitoring).
 
 paths:
+  # ——— Operations ————————————————————————————————————————————————————————
+  /health:
+    get:
+      tags: [Operations]
+      operationId: getHealth
+      summary: Health of the backend and its database connection
+      security: []
+      responses:
+        '200':
+          description: The backend is up and the database is reachable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+        '503':
+          description: The database is unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+
   # ——— Public ————————————————————————————————————————————————————————————
   /catalog/products:
     get:
       tags: [Catalog (public)]
       operationId: listProducts
+      security: []
       summary: List active products
       parameters:
         - name: category
@@ -79,6 +106,7 @@ paths:
     get:
       tags: [Catalog (public)]
       operationId: getProduct
+      security: []
       summary: Get an active product by slug
       parameters:
         - name: slug
@@ -97,6 +125,7 @@ paths:
     get:
       tags: [Catalog (public)]
       operationId: listCategories
+      security: []
       summary: The whole category tree
       responses:
         '200':
@@ -115,6 +144,7 @@ paths:
     get:
       tags: [Catalog (public)]
       operationId: getCategory
+      security: []
       summary: A category with its subtree and breadcrumbs
       parameters:
         - name: slug
@@ -507,6 +537,13 @@ components:
           schema: { $ref: '#/components/schemas/ValidationProblem' }
 
   schemas:
+    Health:
+      type: object
+      additionalProperties: false
+      required: [status, database]
+      properties:
+        status: { type: string, enum: [ok, error] }
+        database: { type: string, enum: [ok, unavailable] }
     Uuid:
       type: string
       format: uuid
