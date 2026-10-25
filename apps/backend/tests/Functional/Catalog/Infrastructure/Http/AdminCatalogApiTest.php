@@ -72,6 +72,18 @@ final class AdminCatalogApiTest extends ApiTestCase
         $this->assertProblem(422);
     }
 
+    public function testRejectsControlCharactersInsteadOfTruncatingText(): void
+    {
+        $this->createProductRequest(['name' => "a\u{0}b"]);
+        $this->assertProblem(422, 'control characters');
+
+        $this->createProductRequest(['description' => "x\u{0}y"]);
+        $this->assertProblem(422, 'control characters');
+
+        $this->admin('POST', '/admin/catalog/categories', ['slug' => 'tea', 'name' => "N\u{0}x"]);
+        $this->assertProblem(422, 'control characters');
+    }
+
     public function testRejectsAZeroPrice(): void
     {
         $this->createProductRequest(['netPrice' => '0.00']);

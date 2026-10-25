@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Catalog\Domain\Product;
 
 use App\Catalog\Domain\Category\CategoryId;
+use App\Catalog\Domain\PlainText;
 use App\Catalog\Domain\Slug;
 use App\Shared\Domain\Exception\InvalidValue;
 use App\Shared\Domain\Pricing\Money;
@@ -165,6 +166,7 @@ final class Product
 
     private static function validName(string $name): string
     {
+        PlainText::assertLine($name, 'product name');
         $name = trim($name);
         if ('' === $name || mb_strlen($name) > self::NAME_MAX_LENGTH) {
             throw new InvalidValue(\sprintf('A product name must have 1 to %d characters.', self::NAME_MAX_LENGTH));
@@ -178,6 +180,9 @@ final class Product
         $description = null === $description ? null : trim($description);
         if ('' === $description) {
             return null;
+        }
+        if (null !== $description) {
+            PlainText::assertText($description, 'product description');
         }
         if (null !== $description && mb_strlen($description) > self::DESCRIPTION_MAX_LENGTH) {
             throw new InvalidValue(\sprintf('A product description can have at most %d characters.', self::DESCRIPTION_MAX_LENGTH));

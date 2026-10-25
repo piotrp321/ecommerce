@@ -31,6 +31,13 @@ final class CategoryTest extends TestCase
         Category::create(CategoryId::generate(), new Slug('tea'), ' ');
     }
 
+    public function testRejectsControlCharactersInTheName(): void
+    {
+        $this->expectException(InvalidValue::class);
+
+        Category::create(CategoryId::generate(), new Slug('tea'), "Tea\x00s");
+    }
+
     public function testLimitsTheNameLength(): void
     {
         $this->expectException(InvalidValue::class);

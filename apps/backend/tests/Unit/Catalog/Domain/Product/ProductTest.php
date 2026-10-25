@@ -72,6 +72,27 @@ final class ProductTest extends TestCase
         $this->product(name: str_repeat('ż', 201));
     }
 
+    #[TestWith(["Green\x00tea"])]
+    #[TestWith(["Green\ttea"])]
+    #[TestWith(["Green\ntea"])]
+    #[TestWith(["Green\x7Ftea"])]
+    #[TestWith(["Green \xC3\x28"])] // invalid UTF-8
+    public function testRejectsControlCharactersInTheName(string $name): void
+    {
+        $this->expectException(InvalidValue::class);
+
+        $this->product(name: $name);
+    }
+
+    public function testAllowsLineBreaksButNoOtherControlCharactersInTheDescription(): void
+    {
+        self::assertSame("Loose leaf\r\n\tfrom Japan", $this->product(description: "Loose leaf\r\n\tfrom Japan")->description());
+
+        $this->expectException(InvalidValue::class);
+
+        $this->product(description: "Loose\x00leaf");
+    }
+
     public function testLimitsTheDescriptionLength(): void
     {
         $this->expectException(InvalidValue::class);

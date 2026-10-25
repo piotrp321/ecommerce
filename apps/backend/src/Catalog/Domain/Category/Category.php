@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Catalog\Domain\Category;
 
+use App\Catalog\Domain\PlainText;
 use App\Catalog\Domain\Slug;
 use App\Shared\Domain\Exception\InvalidValue;
 
@@ -72,6 +73,7 @@ final class Category
 
     private static function validName(string $name): string
     {
+        PlainText::assertLine($name, 'category name');
         $name = trim($name);
         if ('' === $name || mb_strlen($name) > self::NAME_MAX_LENGTH) {
             throw new InvalidValue(\sprintf('A category name must have 1 to %d characters.', self::NAME_MAX_LENGTH));
