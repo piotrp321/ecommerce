@@ -1,4 +1,4 @@
-import { fireEvent, screen, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { renderApp } from '../../test/renderApp';
 
 async function table() {
@@ -55,6 +55,60 @@ describe('ProductsPage', () => {
     expect(await screen.findByText('Ta strona nie istnieje')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Przejdź do pierwszej strony' }));
     expect(await screen.findByText('1–20 z 36')).toBeInTheDocument();
+  });
+
+  it('applies a typed search after the debounce and keeps the trailing space', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderApp('/products');
+      await table();
+      const search = screen.getByRole('searchbox', { name: 'Szukaj po nazwie lub SKU' });
+
+      fireEvent.change(search, { target: { value: 'Laptop ' } });
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      expect(window.location.search).toBe('?q=Laptop');
+      expect(search).toHaveValue('Laptop ');
+
+      fireEvent.change(search, { target: { value: 'Laptop Air' } });
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      expect(window.location.search).toBe('?q=Laptop+Air');
+      expect(await screen.findByText('1–1 z 1')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows a supported page size when the URL has another one', async () => {
+    renderApp('/products?perPage=37');
+
+    expect(await screen.findByText('1–20 z 36')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Na stronie' })).toHaveValue('20');
+  });
+
+  it('ignores a malformed category id', async () => {
+    renderApp('/products?category=garbage');
+
+    expect(await screen.findByText('1–20 z 36')).toBeInTheDocument();
+  });
+
+  it('drops a category that does not exist from the URL', async () => {
+    renderApp('/products?category=c0000000-0000-4000-8000-000000000999');
+
+    await waitFor(() => {
+      expect(window.location.search).toBe('');
+    });
+    expect(await screen.findByText('1–20 z 36')).toBeInTheDocument();
+  });
+
+  it('caps a search phrase from the URL at 100 characters', async () => {
+    renderApp(`/products?q=${'x'.repeat(150)}`);
+
+    expect(await screen.findByText('Brak produktów spełniających kryteria')).toBeInTheDocument();
+    expect(screen.getByRole('searchbox', { name: 'Szukaj po nazwie lub SKU' })).toHaveValue('x'.repeat(100));
   });
 
   it('sorts by a column header', async () => {

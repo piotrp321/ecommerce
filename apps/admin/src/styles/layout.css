@@ -243,6 +243,7 @@
 }
 
 .layout__backdrop {
+  display: none;
   position: fixed;
   inset: 0;
   z-index: 35;
@@ -274,6 +275,10 @@
 
   .topbar__menu {
     display: inline-flex;
+  }
+
+  .layout__backdrop {
+    display: block;
   }
 }
 

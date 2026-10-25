@@ -17,7 +17,7 @@ import { navigate, useLocation } from '../../lib/router';
 import { LOW_STOCK_THRESHOLD } from '../../lib/stock';
 import { useAsync } from '../../lib/useAsync';
 import { useDocumentTitle } from '../../lib/useDocumentTitle';
-import { productQueryFromParams, productQueryToSearch } from '../products/productQuery';
+import { PER_PAGE_OPTIONS, productQueryFromParams, productQueryToSearch } from '../products/productQuery';
 import { StockEditor } from './StockEditor';
 
 export function InventoryPage() {
@@ -183,6 +183,7 @@ export function InventoryPage() {
           onPerPageChange={(next) => {
             setQuery({ perPage: next });
           }}
+          perPageOptions={PER_PAGE_OPTIONS}
         />
       </>
     );

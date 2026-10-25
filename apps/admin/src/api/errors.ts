@@ -46,14 +46,27 @@ export function violationsByField(error: unknown): Record<string, string> {
   return fields;
 }
 
-/** A message for the user; never exposes stack traces or raw responses. */
-export function errorMessage(error: unknown): string {
+/** Violations whose `propertyPath` is not one of the fields a form shows. */
+export function unmappedViolations(error: unknown, fields: readonly string[] = []): Violation[] {
+  return error instanceof ApiError ? error.violations.filter((v) => !fields.includes(v.propertyPath)) : [];
+}
+
+/**
+ * A message for the user; never exposes stack traces or raw responses.
+ * `fields` are the properties the caller marks next to its inputs; other
+ * violations are spelled out, so the user always sees what to fix.
+ */
+export function errorMessage(error: unknown, fields: readonly string[] = []): string {
   if (error instanceof ApiError) {
     if (error.status === 401 || error.status === 403) {
       return 'Brak uprawnień do wykonania tej operacji.';
     }
     if (error.violations.length > 0 && error.detail === undefined) {
-      return 'Popraw zaznaczone pola formularza.';
+      const unmapped = unmappedViolations(error, fields);
+
+      return unmapped.length === 0
+        ? 'Popraw zaznaczone pola formularza.'
+        : `Nieprawidłowe dane: ${unmapped.map((v) => `${v.title} (${v.propertyPath})`).join(' ')}`;
     }
 
     return error.detail ?? error.title;

@@ -41,6 +41,24 @@ describe('CategoriesPage', () => {
     expect(await within(dialog).findByRole('alert')).toHaveTextContent('powstałby cykl');
   });
 
+  it('moves a category and keeps focus on the page', async () => {
+    renderApp('/categories');
+    const opener = await screen.findByRole('button', { name: 'Przenieś Audio' });
+    opener.focus();
+    fireEvent.click(opener);
+    const dialog = screen.getByRole('dialog', { name: 'Przenieś „Audio”' });
+
+    fireEvent.change(within(dialog).getByRole('combobox'), { target: { value: '' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Przenieś' }));
+
+    expect(await screen.findByText('Przeniesiono „Audio” na poziom główny.')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(document.activeElement).not.toBe(document.body);
+    });
+    expect(screen.getByRole('heading', { level: 1, name: 'Kategorie' })).toHaveFocus();
+  });
+
   it('confirms deletion and shows why a category with products cannot be deleted', async () => {
     renderApp('/categories');
     fireEvent.click(await screen.findByRole('button', { name: 'Usuń Laptopy' }));
@@ -53,12 +71,16 @@ describe('CategoriesPage', () => {
 
   it('deletes an empty category', async () => {
     renderApp('/categories');
-    fireEvent.click(await screen.findByRole('button', { name: 'Usuń Wyprzedaż' }));
+    const opener = await screen.findByRole('button', { name: 'Usuń Wyprzedaż' });
+    opener.focus();
+    fireEvent.click(opener);
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Usuń kategorię' }));
 
     expect(await screen.findByText('Usunięto kategorię „Wyprzedaż”.')).toBeInTheDocument();
+    expect(screen.queryByText('Wyprzedaż')).not.toBeInTheDocument();
+    // The deleted row's button is gone, so focus moves to the page heading, not to <body>.
     await waitFor(() => {
-      expect(screen.queryByText('Wyprzedaż')).not.toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: 'Kategorie' })).toHaveFocus();
     });
   });
 });

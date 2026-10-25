@@ -1,5 +1,5 @@
 import { useState, type SubmitEvent } from 'react';
-import { errorMessage, violationsByField } from '../../api/errors';
+import { errorMessage, unmappedViolations, violationsByField } from '../../api/errors';
 import type { CategoryInput } from '../../api/types';
 import { Alert } from '../../components/Alert';
 import { Button } from '../../components/Button';
@@ -20,6 +20,8 @@ interface CategoryFormDialogProps {
 }
 
 type Errors = Partial<Record<keyof CategoryInput, string>>;
+
+const FIELDS: readonly (keyof CategoryInput)[] = ['name', 'slug'];
 
 /** Create or edit a category (name and slug). Mount it per opening, so it starts with fresh values. */
 export function CategoryFormDialog({ open, title, description, initialValues, submitLabel, onSubmit, onClose }: CategoryFormDialogProps) {
@@ -55,8 +57,9 @@ export function CategoryFormDialog({ open, title, description, initialValues, su
       const fields = violationsByField(error);
       const serverErrors: Errors = { name: fields.name, slug: fields.slug };
       setErrors(serverErrors);
-      if (serverErrors.name === undefined && serverErrors.slug === undefined) {
-        setFormError(errorMessage(error));
+      const anyMapped = serverErrors.name !== undefined || serverErrors.slug !== undefined;
+      if (!anyMapped || unmappedViolations(error, FIELDS).length > 0) {
+        setFormError(errorMessage(error, FIELDS));
       }
     } finally {
       setPending(false);

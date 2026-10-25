@@ -1,5 +1,5 @@
 import { useRef, useState, type SubmitEvent, type ReactNode } from 'react';
-import { errorMessage, violationsByField } from '../../api/errors';
+import { errorMessage, unmappedViolations, violationsByField } from '../../api/errors';
 import type { CreateProductInput, Money } from '../../api/types';
 import { Alert } from '../../components/Alert';
 import { Button } from '../../components/Button';
@@ -77,10 +77,11 @@ export function ProductForm({ mode, initialValues, categories, savedGross, onSub
         serverErrors[field] = fields[field];
       }
       setErrors(serverErrors);
-      if (FIELD_ORDER.some((field) => serverErrors[field] !== undefined)) {
+      const anyMapped = FIELD_ORDER.some((field) => serverErrors[field] !== undefined);
+      if (anyMapped && unmappedViolations(error, FIELD_ORDER).length === 0) {
         focusFirstError(serverErrors);
       } else {
-        setFormError(errorMessage(error));
+        setFormError(errorMessage(error, FIELD_ORDER));
         requestAnimationFrame(() => alertRef.current?.focus());
       }
     } finally {

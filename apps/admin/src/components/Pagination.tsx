@@ -6,12 +6,20 @@ interface PaginationProps {
   totalItems: number;
   totalPages: number;
   onPageChange: (page: number) => void;
+  /** Shows a page size select; `perPage` must be one of `perPageOptions`. */
   onPerPageChange?: (perPage: number) => void;
+  perPageOptions?: readonly number[];
 }
 
-const PER_PAGE_OPTIONS = [10, 20, 50];
-
-export function Pagination({ page, perPage, totalItems, totalPages, onPageChange, onPerPageChange }: PaginationProps) {
+export function Pagination({
+  page,
+  perPage,
+  totalItems,
+  totalPages,
+  onPageChange,
+  onPerPageChange,
+  perPageOptions = [],
+}: PaginationProps) {
   const from = totalItems === 0 ? 0 : (page - 1) * perPage + 1;
   const to = Math.min(page * perPage, totalItems);
 
@@ -21,7 +29,7 @@ export function Pagination({ page, perPage, totalItems, totalPages, onPageChange
         {from}–{to} z {totalItems}
       </p>
       <div className="pagination__controls">
-        {onPerPageChange !== undefined && (
+        {onPerPageChange !== undefined && perPageOptions.length > 0 && (
           <label className="pagination__per-page">
             <span>Na stronie</span>
             <select
@@ -31,7 +39,7 @@ export function Pagination({ page, perPage, totalItems, totalPages, onPageChange
                 onPerPageChange(Number(event.target.value));
               }}
             >
-              {PER_PAGE_OPTIONS.map((option) => (
+              {perPageOptions.map((option) => (
                 <option key={option} value={option}>
                   {option}
                 </option>

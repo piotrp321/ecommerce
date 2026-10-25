@@ -1,4 +1,6 @@
 import { fireEvent, screen } from '@testing-library/react';
+import { ApiError } from '../../api/errors';
+import { createDemoApi } from '../../demo/createDemoApi';
 import { demoId } from '../../demo/fixtures';
 import { renderApp } from '../../test/renderApp';
 
@@ -35,6 +37,25 @@ describe('ProductFormPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Utwórz produkt' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Produkt z SKU LAP-ZEN-14 już istnieje.');
+  });
+
+  it('spells out API violations that do not match a form field', async () => {
+    const demo = createDemoApi({ latencyMs: 0 });
+    const api = {
+      ...demo,
+      createProduct: () =>
+        Promise.reject(
+          new ApiError({ status: 422, title: 'Validation Failed', violations: [{ propertyPath: 'price.net', title: 'Too many digits.' }] }),
+        ),
+    };
+    renderApp('/products/new', api);
+    await screen.findByRole('button', { name: 'Utwórz produkt' });
+    fill('Nazwa', 'Produkt');
+    fill('SKU', 'TEST-2');
+    fill('Cena netto', '10');
+    fireEvent.click(screen.getByRole('button', { name: 'Utwórz produkt' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Nieprawidłowe dane: Too many digits. (price.net)');
   });
 
   it('creates a product and opens it for editing', async () => {

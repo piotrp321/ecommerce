@@ -10,3 +10,21 @@ Object.assign(HTMLDialogElement.prototype, {
   },
 });
 Object.defineProperty(window, 'scrollTo', { value: () => undefined, writable: true });
+
+// jsdom has no matchMedia either. Tests can fire a change with `fireMediaChange`.
+const mediaListeners = new Set<(event: MediaQueryListEvent) => void>();
+Object.defineProperty(window, 'matchMedia', {
+  writable: true,
+  value: (media: string) => ({
+    media,
+    matches: false,
+    addEventListener: (_type: 'change', listener: (event: MediaQueryListEvent) => void) => mediaListeners.add(listener),
+    removeEventListener: (_type: 'change', listener: (event: MediaQueryListEvent) => void) => mediaListeners.delete(listener),
+  }),
+});
+
+export function fireMediaChange(matches: boolean): void {
+  for (const listener of mediaListeners) {
+    listener({ matches } as MediaQueryListEvent);
+  }
+}

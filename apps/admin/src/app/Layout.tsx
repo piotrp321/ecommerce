@@ -5,6 +5,9 @@ import { currentNavItem } from './navigation';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 
+/** Matches the layout.css breakpoint where the sidebar stops being a drawer. */
+const DESKTOP_QUERY = '(min-width: 1024px)';
+
 export function Layout({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
 
@@ -30,6 +33,22 @@ export function Layout({ children }: { children: ReactNode }) {
     document.querySelector<HTMLElement>('[data-page-heading]')?.focus();
     window.scrollTo({ top: 0 });
   }, [pathname]);
+
+  // Widening the window to the desktop layout (e.g. rotating a tablet) closes
+  // the drawer, so the page does not stay inert behind a hidden menu.
+  useEffect(() => {
+    const desktop = window.matchMedia(DESKTOP_QUERY);
+    function onChange(event: MediaQueryListEvent) {
+      if (event.matches) {
+        setMenu((current) => ({ ...current, open: false }));
+      }
+    }
+    desktop.addEventListener('change', onChange);
+
+    return () => {
+      desktop.removeEventListener('change', onChange);
+    };
+  }, []);
 
   // The drawer (tablet and phone) takes focus when opened and gives it back to the menu button on Escape.
   useEffect(() => {

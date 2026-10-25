@@ -1,7 +1,8 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { UnavailableScreen } from './app/UnavailableScreen';
 import { createDemoApi } from './demo/createDemoApi';
 import { renderApp } from './test/renderApp';
+import { fireMediaChange } from './test/setup';
 
 describe('App', () => {
   it('opens on the dashboard with statistics and a visible demo notice', async () => {
@@ -22,6 +23,19 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Kategorie' })).toBeInTheDocument();
     expect(within(nav).getByRole('link', { name: 'Kategorie' })).toHaveAttribute('aria-current', 'page');
     expect(window.location.pathname).toBe('/categories');
+  });
+
+  it('closes the mobile menu when the window widens to the desktop layout', () => {
+    renderApp('/');
+    const menuButton = screen.getByRole('button', { name: 'Otwórz menu' });
+
+    fireEvent.click(menuButton);
+    expect(menuButton).toHaveAttribute('aria-expanded', 'true');
+    act(() => {
+      fireMediaChange(true);
+    });
+
+    expect(menuButton).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('shows placeholders for modules that are not built yet', () => {

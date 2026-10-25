@@ -31,7 +31,7 @@ export function StockEditor({ productName, onHand, onSave, onCancel }: StockEdit
     try {
       await onSave(Number(trimmed));
     } catch (caught) {
-      setError(violationsByField(caught).onHand ?? errorMessage(caught));
+      setError(violationsByField(caught).onHand ?? errorMessage(caught, ['onHand']));
       setPending(false);
     }
   }

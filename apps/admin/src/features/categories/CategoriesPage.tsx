@@ -31,7 +31,7 @@ export function CategoriesPage() {
   const api = useAdminApi();
   const toast = useToast();
   const load = useCallback(() => api.listCategories(), [api]);
-  const { data: tree, error, loading, reload } = useAsync(load);
+  const { data: tree, error, loading, reload, update } = useAsync(load);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [dialogKey, setDialogKey] = useState(0);
@@ -62,34 +62,49 @@ export function CategoriesPage() {
     });
   }, []);
 
+  /**
+   * Loads the tree after a change before the dialog closes, so the dialog
+   * returns focus to an element that still exists (after a delete or a move
+   * the opener is gone and focus goes to the page heading). If only this
+   * reload fails, the change was saved: the page shows its error state.
+   */
+  async function refreshTree() {
+    try {
+      const fresh = await api.listCategories();
+      update(() => fresh);
+    } catch {
+      reload();
+    }
+  }
+
   async function create(parent: CategoryNode | null, input: CategoryInput) {
     const created = await api.createCategory({ ...input, parentId: parent?.id ?? null });
     if (parent !== null) {
       setCollapsed((current) => new Set([...current].filter((id) => id !== parent.id)));
     }
+    await refreshTree();
     close();
-    reload();
     toast(`Dodano kategorię „${created.name}”.`);
   }
 
   async function edit(node: CategoryNode, input: CategoryInput) {
     const updated = await api.updateCategory(node.id, input);
+    await refreshTree();
     close();
-    reload();
     toast(`Zapisano kategorię „${updated.name}”.`);
   }
 
   async function move(node: CategoryNode, parentId: string | null) {
     await api.moveCategory(node.id, parentId);
+    await refreshTree();
     close();
-    reload();
     const target = options.find((option) => option.id === parentId);
     toast(target === undefined ? `Przeniesiono „${node.name}” na poziom główny.` : `Przeniesiono „${node.name}” do „${target.name}”.`);
   }
 
   async function remove(node: CategoryNode) {
     await api.deleteCategory(node.id);
-    reload();
+    await refreshTree();
     toast(`Usunięto kategorię „${node.name}”.`);
   }
 

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAdminApi } from '../../api/AdminApiContext';
 import type { Product, ProductSort } from '../../api/types';
 import { AvailabilityBadge } from '../../components/AvailabilityBadge';
@@ -22,7 +22,7 @@ import { formatAmount } from '../../lib/money';
 import { navigate, useLocation } from '../../lib/router';
 import { useAsync } from '../../lib/useAsync';
 import { useDocumentTitle } from '../../lib/useDocumentTitle';
-import { productQueryFromParams, productQueryToSearch } from './productQuery';
+import { PER_PAGE_OPTIONS, productQueryFromParams, productQueryToSearch } from './productQuery';
 
 const SORT_LABELS: Record<ProductSort, string> = {
   newest: 'Najnowsze',
@@ -57,6 +57,14 @@ export function ProductsPage() {
   const products = useAsync(loadProducts);
   const loadCategories = useCallback(async () => categoryOptions(await api.listCategories()), [api]);
   const categories = useAsync(loadCategories);
+
+  // A category that no longer exists (e.g. an old bookmark) would leave an
+  // empty list under "Wszystkie kategorie": drop it from the URL instead.
+  useEffect(() => {
+    if (categoryId !== undefined && categories.data !== undefined && !categories.data.some((c) => c.id === categoryId)) {
+      setQuery({ categoryId: undefined });
+    }
+  }, [categoryId, categories.data, setQuery]);
 
   const onSearch = useCallback(
     (value: string) => {
@@ -247,6 +255,7 @@ export function ProductsPage() {
           onPerPageChange={(next) => {
             setQuery({ perPage: next });
           }}
+          perPageOptions={PER_PAGE_OPTIONS}
         />
       </>
     );
