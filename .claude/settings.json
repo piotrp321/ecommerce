@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "ask": [
+      "Bash(git push *)",
+      "Bash(git merge *)",
+      "Bash(gh pr merge *)",
+      "Bash(git branch -d *)",
+      "Bash(git branch -D *)",
+      "Bash(git branch --delete *)",
+      "Bash(git worktree remove *)",
+      "Bash(git worktree prune *)",
+      "Bash(rm *.claude/worktrees*)",
+      "Bash(git reset --hard *)",
+      "Bash(git clean *)",
+      "Bash(git checkout -- *)",
+      "Bash(git restore *)",
+      "Bash(git stash drop *)",
+      "Bash(git stash clear *)",
+      "Bash(docker compose down *-v*)",
+      "Bash(docker volume rm *)",
+      "Bash(docker volume prune *)",
+      "Bash(docker system prune *)"
+    ]
+  }
+}
