@@ -1,0 +1,20 @@
+# Build context of the store image is the repository root; this file (next to
+# the Dockerfile, picked up by BuildKit) restricts it to an allowlist.
+# Other apps, local node_modules/.next (host binaries and cache), .env files and
+# tooling such as .claude/ never reach the image. Add new paths here deliberately.
+*
+
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!apps/store/
+!infra/docker/store/
+
+apps/store/node_modules/
+apps/store/.next/
+apps/store/next-env.d.ts
+apps/store/coverage/
+apps/store/.env*
+infra/docker/store/Dockerfile*
+**/.DS_Store
+**/.gitignore

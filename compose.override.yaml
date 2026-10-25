@@ -3,12 +3,13 @@
 # - apps/backend is bind-mounted into /app (code, vendor/ and var/),
 # - dependencies are installed explicitly with `make backend-install`,
 # - the database port is published on the host,
-# - admin runs the Vite dev server (HMR) on the bind-mounted repository; its
-#   node_modules live in Docker volumes (Linux binaries), separate from a macOS
-#   host install, and are installed explicitly with `make pnpm-install`.
+# - admin (Vite) and store (Next.js) run dev servers with HMR on the bind-mounted
+#   repository; their node_modules (and the store's .next) live in Docker volumes
+#   (Linux binaries, build cache), separate from a macOS host install, and are
+#   installed explicitly with `make pnpm-install`.
 # All ports are bound to 127.0.0.1 only, so they are not reachable from the network.
-# The admin service exists only in development for now; its production
-# deployment comes with the central edge proxy (stage 4).
+# The admin and store services exist only in development for now; their
+# production deployment comes with the central edge proxy (stage 4).
 
 services:
   backend:
@@ -57,15 +58,42 @@ services:
       ADMIN_DEV_POLLING: ${ADMIN_DEV_POLLING:-0}
     volumes:
       - ./:/workspace
-      # Mask the host node_modules: the container uses its own (Linux) dependencies.
+      # Mask every node_modules of the workspace (pnpm installs all of them from any
+      # frontend container): the containers use their own Linux dependencies.
       - node_modules:/workspace/node_modules
       - admin_node_modules:/workspace/apps/admin/node_modules
+      - store_node_modules:/workspace/apps/store/node_modules
     ports:
       - target: 5173
         host_ip: 127.0.0.1
         published: ${ADMIN_PORT:-5173}
         protocol: tcp
 
+  store:
+    image: ${IMAGES_PREFIX:-}ecommerce-store-dev
+    build:
+      # Repository root as context, restricted by infra/docker/store/Dockerfile.dockerignore.
+      context: .
+      dockerfile: infra/docker/store/Dockerfile
+      target: store_dev
+    restart: unless-stopped
+    environment:
+      STORE_DEV_POLLING: ${STORE_DEV_POLLING:-0}
+    volumes:
+      - ./:/workspace
+      # Same node_modules volumes as admin, plus the Next.js build cache.
+      - node_modules:/workspace/node_modules
+      - admin_node_modules:/workspace/apps/admin/node_modules
+      - store_node_modules:/workspace/apps/store/node_modules
+      - store_next:/workspace/apps/store/.next
+    ports:
+      - target: 3000
+        host_ip: 127.0.0.1
+        published: ${STORE_PORT:-3000}
+        protocol: tcp
+
 volumes:
   node_modules:
   admin_node_modules:
+  store_node_modules:
+  store_next:
