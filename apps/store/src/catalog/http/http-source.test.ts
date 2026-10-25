@@ -106,6 +106,19 @@ describe('HTTP catalog source', () => {
       }
       expect(fetchMock).not.toHaveBeenCalled();
     });
+
+    it('does not call the backend for slugs longer than the contract maxLength of 120', async () => {
+      const { source, fetchMock, requested } = setup(() => json(notFound, 404));
+
+      for (const slug of ['a'.repeat(121), 'a'.repeat(5000)]) {
+        expect(await source.getProduct(slug)).toBeNull();
+        expect(await source.getCategory(slug)).toBeNull();
+      }
+      expect(fetchMock).not.toHaveBeenCalled();
+
+      await source.getProduct('a'.repeat(120));
+      expect(requested()).toEqual([`${BASE}/catalog/products/${'a'.repeat(120)}`]);
+    });
   });
 
   describe('mapping', () => {
@@ -206,6 +219,23 @@ describe('HTTP catalog source', () => {
       const { source } = setup(() => json({ ...apiProduct, price: { gross: { amount: 1249.99, currency: 'PLN' }, vatRate: 23 } }));
 
       await expect(source.getProduct('sluchawki-aria')).rejects.toThrow(/Catalog API/);
+    });
+
+    it.each(['1249.9', '1249.999', '1249', '01249.99', '-1.00', '1,249.99', '1 249.99', '1249.99 ', '1234567890.00', ''])(
+      'rejects an amount %j outside the contract Amount pattern',
+      async (amount) => {
+        const { source } = setup(() => json({ ...apiProduct, price: { gross: { amount, currency: 'PLN' }, vatRate: 23 } }));
+
+        await expect(source.getProduct('sluchawki-aria')).rejects.toThrow(
+          'Catalog API: GET /catalog/products/sluchawki-aria returned data outside the contract',
+        );
+      },
+    );
+
+    it.each(['0.00', '10.00', '123456789.99'])('accepts the contract amount %j as is', async (amount) => {
+      const { source } = setup(() => json({ ...apiProduct, price: { gross: { amount, currency: 'PLN' }, vatRate: 23 } }));
+
+      expect((await source.getProduct('sluchawki-aria'))?.price.gross.amount).toBe(amount);
     });
 
     it('does not reveal the backend address in its errors', async () => {

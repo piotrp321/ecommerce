@@ -17,8 +17,13 @@ interface HttpCatalogOptions {
 
 const DEFAULT_TIMEOUT_MS = 5000;
 
-/** `Slug` of the contract; other values cannot name a category or a product. */
+/** `Slug` of the contract (pattern and maxLength); other values cannot name a category or a product. */
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const SLUG_MAX_LENGTH = 120;
+const isContractSlug = (slug: string): boolean => slug.length <= SLUG_MAX_LENGTH && SLUG.test(slug);
+
+/** `Amount` of the contract: decimal PLN with exactly two fractional digits. */
+const AMOUNT = /^(0|[1-9]\d{0,8})\.\d{2}$/;
 
 const VAT_RATES: readonly PublicPrice['vatRate'][] = [23, 8, 5, 0];
 
@@ -88,7 +93,9 @@ function price(value: unknown, path: string): PublicPrice {
   const gross = r.nested('gross', (money, moneyPath): Money => {
     const m = reader(money, moneyPath);
     if (m.string('currency') !== 'PLN') throw new TypeError(`${moneyPath}.currency is not PLN`);
-    return { amount: m.string('amount'), currency: 'PLN' };
+    const amount = m.string('amount');
+    if (!AMOUNT.test(amount)) throw new TypeError(`${moneyPath}.amount is not an Amount of the contract`);
+    return { amount, currency: 'PLN' };
   });
   const vatRate = VAT_RATES.find((rate) => rate === r.integer('vatRate'));
   if (vatRate === undefined) throw new TypeError(`${path}.vatRate is not a VAT rate of the contract`);
@@ -183,7 +190,7 @@ export function createHttpCatalogSource({
 
   /** A single entity by slug: `null` when it does not exist (HTTP 404, or a slug outside the contract). */
   const find = <T>(collection: string, slug: string, map: (value: unknown, path: string) => T): Promise<T | null> =>
-    SLUG.test(slug) ? get(`/catalog/${collection}/${encodeURIComponent(slug)}`, map, { value: null }) : Promise.resolve(null);
+    isContractSlug(slug) ? get(`/catalog/${collection}/${encodeURIComponent(slug)}`, map, { value: null }) : Promise.resolve(null);
 
   return {
     isDemo: false,

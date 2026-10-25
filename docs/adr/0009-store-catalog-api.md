@@ -20,8 +20,8 @@ The store renders its catalog from demo data behind the `CatalogSource` interfac
    - `src/catalog/http/http-source.ts` implements `CatalogSource` (`isDemo: false`):
      - requests use `cache: 'no-store'`, so data is from the moment of the request; React's `cache()` in `src/catalog/index.ts` dedupes calls within one render;
      - a 5 s timeout per request and `redirect: 'error'`;
-     - responses are mapped field by field onto the store types (unknown fields dropped, types checked, `image: null`);
-     - slugs are URL-encoded, and a slug outside the contract's `Slug` pattern resolves to "not found" without a request.
+     - responses are mapped field by field onto the store types (unknown fields dropped, types checked, amounts checked against the contract's `Amount` pattern, `image: null`);
+     - slugs are URL-encoded, and a slug outside the contract's `Slug` (pattern or `maxLength` 120) resolves to "not found" without a request.
 
 2. **Source selection at runtime.**
    - `src/catalog/index.ts` stays the only place that decides, through the pure function `createCatalogSource(env)`:
