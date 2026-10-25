@@ -26,7 +26,7 @@ for _ in $(seq 1 40); do
 	sleep 1
 done
 [ "$(docker inspect -f '{{.State.Health.Status}}' "$NAME")" = "healthy" ] \
-	&& pass "container healthy with a read-only filesystem and no capabilities" \
+	&& pass "container healthy with a read-only filesystem and no capabilities (no backend running)" \
 	|| fail "container did not become healthy"
 
 uid="$(docker exec "$NAME" id -u 2>/dev/null || true)"
@@ -39,6 +39,14 @@ page="$(curl -s -w '\n%{http_code}' "$BASE/")"
 	&& pass "home page is rendered per request (Cache-Control: no-store)" || fail "home page Cache-Control"
 
 [ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/does-not-exist")" = "404" ] && pass "unknown routes return 404" || fail "unknown route status"
+
+# Started without STORE_BACKEND_URL (and without a backend), the image serves the demo
+# catalog, labelled as such; the same image switches to the API at runtime (ADR-0009).
+grep -q 'Wersja demonstracyjna.' <<<"$page" && grep -q '<meta name="robots" content="noindex, nofollow"' <<<"$page" \
+	&& pass "without STORE_BACKEND_URL: demo catalog with the demo notice and robots noindex, nofollow" || fail "demo labels missing without STORE_BACKEND_URL"
+healthz="$(curl -s -w '\n%{http_code}' "$BASE/healthz")"
+[ "$(tail -n1 <<<"$healthz")" = "200" ] && [ "$(head -n1 <<<"$healthz")" = "ok" ] && [[ "$(header "$BASE/healthz" Cache-Control)" == *no-store* ]] \
+	&& pass "/healthz answers 200 ok, not cached (container HEALTHCHECK)" || fail "/healthz"
 
 asset="$(echo "$page" | grep -oE '/_next/static/[^"]+\.js' | head -n1)"
 [ -n "$asset" ] && [ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE$asset")" = "200" ] \

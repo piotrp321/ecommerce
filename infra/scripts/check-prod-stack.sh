@@ -66,7 +66,13 @@ POSTGRES_PASSWORD="$(openssl rand -hex 12)p@ss:w/rd#?%&=+\$!'\" ;"
 export APP_SECRET POSTGRES_PASSWORD
 
 trap 'compose down --remove-orphans >/dev/null 2>&1 || true' EXIT
-compose up --detach --no-build --wait >/dev/null 2>&1 && pass "all containers healthy" || fail "containers did not become healthy"
+# The store health check (/healthz) does not depend on the backend, so the store is
+# healthy before the database schema exists.
+compose up --detach --no-build --wait >/dev/null 2>&1 && pass "all containers healthy (database not migrated yet)" || fail "containers did not become healthy"
+# The store renders the catalog from the backend (ADR-0009): its pages need the schema,
+# so migrations run before any page is checked.
+compose exec -T backend php bin/console doctrine:migrations:migrate --no-interaction --allow-no-migration >/dev/null 2>&1 \
+	&& pass "migrations run on demand (bin/console doctrine:migrations:migrate)" || fail "migrations failed"
 
 echo "== Routing (edge)"
 fetch "$STORE_DOMAIN" / | grep -q '<h1>Sklep</h1>' && pass "https://${STORE_DOMAIN}/ -> store (server-rendered)" || fail "store not routed"
@@ -85,6 +91,20 @@ unknown="$(curl -sk -o /dev/null -w '%{http_code}' --resolve "unknown.localhost:
 	&& [ -z "$(header "$STORE_DOMAIN" / Server)" ] && [ -z "$(header "$STORE_DOMAIN" / Via)" ] && [ -z "$(header "$STORE_DOMAIN" / X-Powered-By)" ] \
 	&& pass "edge sets HSTS and nosniff, hides Server, Via and X-Powered-By" || fail "edge response headers"
 
+echo "== Store catalog from the backend API (empty catalog)"
+home="$(fetch "$STORE_DOMAIN" / -w '\n%{http_code}')"
+# Here-strings, not `echo | grep -q`: with pipefail an early grep exit could fail the pipe.
+[ "$(tail -n1 <<<"$home")" = "200" ] && grep -q '<h1>Sklep</h1>' <<<"$home" \
+	&& pass "home page renders an empty API catalog (HTTP 200, <h1>Sklep</h1>)" || fail "home page with an empty API catalog"
+! grep -q 'Wersja demonstracyjna' <<<"$home" && ! grep -q 'name="robots"' <<<"$home" \
+	&& pass "STORE_BACKEND_URL set at runtime: no demo notice, no robots noindex/nofollow" || fail "demo labels shown with the API catalog"
+[ "$(status "$STORE_DOMAIN" /produkty)" = "200" ] && pass "product listing renders an empty API catalog (HTTP 200)" || fail "product listing with an empty API catalog"
+for path in /produkt/nie-ma-takiego /kategoria/nie-ma-takiej /does-not-exist; do
+	page="$(fetch "$STORE_DOMAIN" "$path" -w '\n%{http_code}')"
+	[ "$(tail -n1 <<<"$page")" = "404" ] && ! grep -q 'Wersja demonstracyjna' <<<"$page" && ! grep -q 'nofollow' <<<"$page" \
+		&& pass "${path} -> 404 without demo labels" || fail "${path} not a 404 without demo labels"
+done
+
 echo "== Exposure and privileges"
 published="$(compose ps --format '{{.Service}} {{.Ports}}' | grep -- '->' | cut -d' ' -f1 | sort -u | tr '\n' ' ')"
 [ "$published" = "edge " ] && pass "only the edge publishes ports (backend, store, admin, database are internal)" || fail "published services: ${published}"
@@ -99,8 +119,6 @@ done
 
 echo "== Backend behind the edge"
 expect_health 200 "health check with special-character database password"
-compose exec -T backend php bin/console doctrine:migrations:migrate --no-interaction --allow-no-migration >/dev/null 2>&1 \
-	&& pass "migrations run on demand (bin/console doctrine:migrations:migrate)" || fail "migrations failed"
 compose exec -T backend sh -c 'touch /app/src/.write-test' >/dev/null 2>&1 \
 	&& fail "application code is writable" || pass "application code is read-only"
 compose stop database >/dev/null 2>&1
@@ -116,6 +134,31 @@ if compose logs 2>&1 | grep -qF "$POSTGRES_PASSWORD"; then
 else
 	pass "database password absent from logs"
 fi
+
+echo "== Store without the backend"
+# Last health check run of a container: "<start> <exit code>".
+last_health() { docker inspect -f '{{range .State.Health.Log}}{{.Start}} {{.ExitCode}}{{"\n"}}{{end}}' "$1" | grep . | tail -n1 || true; }
+store_id="$(cid store)"
+compose stop backend >/dev/null 2>&1
+before="$(last_health "$store_id")"
+# Wait for at least one health check run with the backend stopped (default interval 30 s).
+for _ in $(seq 1 45); do
+	[ "$(last_health "$store_id")" != "$before" ] && break
+	sleep 1
+done
+after="$(last_health "$store_id")"
+[ "$after" != "$before" ] && [ "${after##* }" = "0" ] && [ "$(docker inspect -f '{{.State.Health.Status}}' "$store_id")" = "healthy" ] \
+	&& pass "store stays healthy with the backend stopped (health check run since: exit 0)" || fail "store health without the backend (before '${before}', after '${after}')"
+[ "$(status "$STORE_DOMAIN" /healthz)" = "200" ] && pass "/healthz answers 200 with the backend stopped" || fail "/healthz with the backend stopped"
+page="$(fetch "$STORE_DOMAIN" / -w '\n%{http_code}')"
+[ "$(tail -n1 <<<"$page")" = "500" ] && ! grep -q 'Wersja demonstracyjna' <<<"$page" \
+	&& pass "pages answer HTTP 500 with the backend stopped (error page, no demo data)" || fail "home page with the backend stopped"
+compose start backend >/dev/null 2>&1
+for _ in $(seq 1 60); do
+	routes_ok && break
+	sleep 1
+done
+routes_ok && pass "backend restarted: store pages work again" || fail "store pages after the backend restart"
 
 echo "== Independent redeployment"
 for svc in store admin backend edge; do
