@@ -4,3 +4,6 @@ packages:
 
 # Fail fast on a Node.js version other than the one pinned in package.json/.node-version.
 engineStrict: true
+
+# Exact versions in package.json when adding dependencies (pnpm add).
+saveExact: true
