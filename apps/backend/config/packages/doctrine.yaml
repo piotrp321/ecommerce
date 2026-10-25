@@ -17,8 +17,21 @@ doctrine:
         identity_generation_preferences:
             Doctrine\DBAL\Platforms\PostgreSQLPlatform: identity
         auto_mapping: true
-        # Mappings are registered per bounded context from Milestone 2 on.
-        mappings: {}
+        # Mappings are registered per bounded context: XML files in the module's
+        # Infrastructure layer, so the domain classes stay free of ORM metadata.
+        mappings:
+            Catalog:
+                type: xml
+                is_bundle: false
+                dir: '%kernel.project_dir%/src/Catalog/Infrastructure/Persistence/Doctrine/Mapping'
+                prefix: 'App\Catalog\Domain'
+                alias: Catalog
+            Inventory:
+                type: xml
+                is_bundle: false
+                dir: '%kernel.project_dir%/src/Inventory/Infrastructure/Persistence/Doctrine/Mapping'
+                prefix: 'App\Inventory\Domain'
+                alias: Inventory
 
 when@test:
     doctrine:

@@ -8,7 +8,7 @@ Podstawa biznesowa: [specs/01-placing-order.md](specs/01-placing-order.md). Ukł
 | # | Milestone | Zakres | Status |
 |---|---|---|---|
 | M1 | Szkielet projektu | Symfony 8.1, Docker Compose (FrankenPHP + PostgreSQL), Doctrine, PHPUnit, PHPStan, Deptrac, CI | zakończony |
-| M2 | Katalog produktów | Podstawowy model produktu (cena netto, stawka VAT, aktywność, stan) i API odczytu | planowany |
+| M2 | Katalog produktów | Produkty (cena netto, stawka VAT, aktywność) i drzewo kategorii (Catalog), stan magazynowy (Inventory), publiczne API odczytu i API administracyjne z tymczasowym tokenem, kontrakt [`docs/api/openapi.yaml`](api/openapi.yaml) ([ADR-0005](adr/0005-catalog-inventory-and-admin-api-access.md)) | w trakcie |
 | M3 | Koszyk | Koszyk zalogowanego użytkownika | planowany |
 | M4 | Składanie zamówienia | Atomowa rezerwacja magazynowa, snapshot cen, idempotency key | planowany |
 | M5 | Cykl życia zamówienia | Płatności, anulowania, timeouty, powiadomienia, pozostałe reguły | planowany |
