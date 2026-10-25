@@ -48,3 +48,14 @@ export function listingHref(pathname: string, { sort, page }: ListingParams): st
 
   return query ? `${pathname}?${query}` : pathname;
 }
+
+/** A page number past the last page of results (page 1 of an empty listing is valid). */
+export function isPastLastPage(page: number, totalPages: number): boolean {
+  return page > Math.max(totalPages, 1);
+}
+
+/** Metadata of a listing page past the last one: not indexed and without a canonical URL. */
+export const pastLastPageMetadata = {
+  title: 'Nie ma takiej strony',
+  robots: { index: false, follow: true },
+} as const;

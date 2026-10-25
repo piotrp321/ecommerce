@@ -1,13 +1,22 @@
 import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import { catalog } from '@/catalog';
-import { listingHref, parseListingParams, toProductQuery, type ListingParams } from '@/catalog/query';
+import {
+  isPastLastPage,
+  listingHref,
+  parseListingParams,
+  pastLastPageMetadata,
+  toProductQuery,
+  type ListingParams,
+} from '@/catalog/query';
 import { ALL_PRODUCTS_HREF } from '@/components/catalog/category-tree';
 import { ProductGridSkeleton } from '@/components/catalog/product-grid';
 import { ListingLayout, ListingResults } from '@/components/catalog/product-listing';
 
 export async function generateMetadata({ searchParams }: PageProps<'/produkty'>): Promise<Metadata> {
   const params = parseListingParams(await searchParams);
+  const result = await catalog.listProducts(toProductQuery(params));
+  if (isPastLastPage(params.page, result.totalPages)) return pastLastPageMetadata;
 
   return {
     title: params.page > 1 ? `Wszystkie produkty, strona ${String(params.page)}` : 'Wszystkie produkty',

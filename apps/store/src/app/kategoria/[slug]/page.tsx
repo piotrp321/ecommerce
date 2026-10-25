@@ -2,7 +2,14 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { Suspense } from 'react';
 import { catalog } from '@/catalog';
-import { listingHref, parseListingParams, toProductQuery, type ListingParams } from '@/catalog/query';
+import {
+  isPastLastPage,
+  listingHref,
+  parseListingParams,
+  pastLastPageMetadata,
+  toProductQuery,
+  type ListingParams,
+} from '@/catalog/query';
 import { ALL_PRODUCTS_HREF, categoryHref } from '@/components/catalog/category-tree';
 import { ProductGridSkeleton } from '@/components/catalog/product-grid';
 import { ListingLayout, ListingResults } from '@/components/catalog/product-listing';
@@ -15,6 +22,8 @@ export async function generateMetadata({ params, searchParams }: PageProps<'/kat
   const category = await catalog.getCategory(slug);
   if (!category) return {};
   const listing = parseListingParams(await searchParams);
+  const result = await catalog.listProducts(toProductQuery(listing, category.slug));
+  if (isPastLastPage(listing.page, result.totalPages)) return pastLastPageMetadata;
   const path = [...category.ancestors.map((ancestor) => ancestor.name), category.name].join(' › ');
 
   return {

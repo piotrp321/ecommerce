@@ -1,4 +1,4 @@
-import { listingHref, parseListingParams, toProductQuery } from './query';
+import { isPastLastPage, listingHref, parseListingParams, toProductQuery } from './query';
 
 describe('listing query parameters', () => {
   it('maps the store parameters to the API query', () => {
@@ -23,5 +23,17 @@ describe('listing query parameters', () => {
     expect(listingHref('/produkty', { sort: 'nazwa', page: 1 })).toBe('/produkty');
     expect(listingHref('/kategoria/audio', { sort: 'cena-rosnaco', page: 1 })).toBe('/kategoria/audio?sortowanie=cena-rosnaco');
     expect(listingHref('/produkty', { sort: 'nazwa', page: 3 })).toBe('/produkty?strona=3');
+  });
+});
+
+describe('isPastLastPage', () => {
+  it.each([
+    [1, 0, false],
+    [1, 1, false],
+    [3, 3, false],
+    [2, 1, true],
+    [4, 3, true],
+  ])('page %i of %i pages → %s', (page, totalPages, expected) => {
+    expect(isPastLastPage(page, totalPages)).toBe(expected);
   });
 });
