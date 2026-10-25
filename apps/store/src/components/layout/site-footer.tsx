@@ -4,9 +4,11 @@ import { ALL_PRODUCTS_HREF, categoryHref } from '@/components/catalog/category-t
 
 interface SiteFooterProps {
   categories: CategoryNode[];
+  /** The catalog is sample data (ADR-0006): the footer says so. */
+  isDemo: boolean;
 }
 
-export function SiteFooter({ categories }: SiteFooterProps) {
+export function SiteFooter({ categories, isDemo }: SiteFooterProps) {
   return (
     <footer className="mt-24 border-t bg-card">
       <div className="mx-auto grid max-w-7xl gap-10 px-4 py-14 sm:px-6 md:grid-cols-[2fr_1fr_1fr] lg:px-8">
@@ -15,7 +17,9 @@ export function SiteFooter({ categories }: SiteFooterProps) {
             Sklep<span className="text-brand">.</span>
           </p>
           <p className="mt-3 text-sm text-muted-foreground">
-            Edukacyjny projekt e-commerce. Katalog jest demonstracyjny: produkty, ceny i dostępność są przykładowe.
+            {isDemo
+              ? 'Edukacyjny projekt e-commerce. Katalog jest demonstracyjny: produkty, ceny i dostępność są przykładowe.'
+              : 'Edukacyjny projekt e-commerce.'}
           </p>
         </div>
         <nav aria-label="Kategorie w stopce">
@@ -38,7 +42,7 @@ export function SiteFooter({ categories }: SiteFooterProps) {
         <div>
           <h2 className="text-sm font-semibold">Zdjęcia</h2>
           <p className="mt-3 text-sm text-muted-foreground">
-            Zdjęcia demonstracyjne pochodzą z{' '}
+            {isDemo ? 'Zdjęcia demonstracyjne' : 'Zdjęcia poglądowe'} pochodzą z{' '}
             <a href="https://unsplash.com" className="underline underline-offset-4 hover:text-foreground">
               Unsplash
             </a>{' '}
@@ -52,7 +56,7 @@ export function SiteFooter({ categories }: SiteFooterProps) {
       </div>
       <div className="border-t">
         <p className="mx-auto max-w-7xl px-4 py-5 text-xs text-muted-foreground sm:px-6 lg:px-8">
-          © {new Date().getFullYear()} Sklep · projekt demonstracyjny
+          © {new Date().getFullYear()} Sklep · {isDemo ? 'projekt demonstracyjny' : 'projekt edukacyjny'}
         </p>
       </div>
     </footer>

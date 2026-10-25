@@ -69,7 +69,7 @@ export default async function ProductPage({ params }: PageProps<'/produkt/[slug]
     <main className="mx-auto max-w-7xl px-4 pt-8 sm:px-6 lg:px-8">
       <CatalogBreadcrumbs trail={trail} current={product.name} />
       <div className="mt-8">
-        <ProductDetails product={product} />
+        <ProductDetails product={product} isDemo={catalog.isDemo} />
       </div>
       <Suspense
         fallback={
