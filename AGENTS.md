@@ -21,7 +21,7 @@ Edukacyjny system e-commerce rozwijany jako monorepo. Projekt służy do nauki A
 - `infra/docker/<app>/`: obraz Docker danej aplikacji (Dockerfile i jego `Dockerfile.dockerignore`)
 - `infra/edge/`: edge proxy (Caddy), jedyny publiczny punkt wejścia produkcji: TLS, routing po domenie i ścieżce (`/api/*` → backend bez prefiksu)
 - `infra/scripts/`: skrypty kontroli prod (`check-prod-admin.sh`, `check-prod-store.sh`, `check-prod-stack.sh` dla całej topologii)
-- `docs/`: specyfikacje, roadmapa, ADR
+- `docs/`: specyfikacje, roadmapa, ADR, kontrakt REST API `docs/api/openapi.yaml` (OpenAPI 3.1)
 - katalog główny: `compose.yaml` (wspólny, projekt dev `ecommerce`), `compose.override.yaml` (dev, porty tylko na localhost), `compose.prod.yaml` (osobny projekt `ecommerce-prod`, edge + trzy aplikacje, wymagane sekrety i domeny), `Makefile`, pnpm workspace (`package.json`, `pnpm-workspace.yaml`, jeden `pnpm-lock.yaml`), `.node-version`, `AGENTS.md`, `README.md`
 
 Obrazy budujemy z kontekstu w katalogu głównym. Co trafia do obrazu, określa allowlista w `infra/docker/<app>/Dockerfile.dockerignore`.
@@ -29,11 +29,12 @@ Obrazy budujemy z kontekstu w katalogu głównym. Co trafia do obrazu, określa 
 ## Komendy
 
 Wszystko uruchamiaj z katalogu głównego przez `make` (`make help` pokazuje listę).
-Konwencja: cele zbiorcze bez prefiksu, cele aplikacji z prefiksem nazwy aplikacji (`backend-*`, `admin-*`, `store-*`, `edge-*`), cała topologia prod z prefiksem `stack-`, cele workspace z prefiksem `pnpm-`.
+Konwencja: cele zbiorcze bez prefiksu, cele aplikacji z prefiksem nazwy aplikacji (`backend-*`, `admin-*`, `store-*`, `edge-*`), cała topologia prod z prefiksem `stack-`, kontrakt API z prefiksem `contract-`, cele workspace z prefiksem `pnpm-`.
 
 - `make bootstrap`: środowisko dev od zera (build, `pnpm-install`, up, Composer, migracje), dokładnie tak jak w README
 - `make up`, `make down`, `make logs`: kontenery dev (`down` nie usuwa wolumenów)
-- `make check`: **obowiązkowa bramka przed każdym commitem** (wszystkie aplikacje)
+- `make check`: **obowiązkowa bramka przed każdym commitem** (lint kontraktu API i wszystkie aplikacje)
+- `make contract-lint`: lint `docs/api/openapi.yaml` (Redocly, `redocly.yaml`); zgodność backendu z kontraktem sprawdzają testy backendu
 - `make build-prod`: obrazy produkcyjne; sekrety podaje się dopiero przy uruchomieniu (`compose.prod.yaml`)
 - `make check-prod`: kontrola obrazów admina (8081) i sklepu (8082) oraz całej topologii prod z edge w tymczasowym projekcie (8080/8443: routing, ekspozycja, uprawnienia, backend, niezależne wdrożenia); uruchamiaj po zmianach w `infra/`, `compose*.yaml` lub `Makefile`
 - `make pnpm-install`, `make pnpm c="…"`: zależności JS i pnpm w kontenerze (`node_modules` w wolumenach Dockera)

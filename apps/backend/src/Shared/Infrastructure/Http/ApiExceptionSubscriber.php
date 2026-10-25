@@ -12,6 +12,8 @@ use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Event\ExceptionEvent;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
+use Symfony\Component\Routing\Exception\MethodNotAllowedException;
+use Symfony\Component\Routing\Exception\ResourceNotFoundException;
 use Symfony\Component\Validator\Exception\ValidationFailedException;
 
 /**
@@ -19,7 +21,10 @@ use Symfony\Component\Validator\Exception\ValidationFailedException;
  * - domain exceptions: their messages are written for API clients, so they
  *   are shown in every environment (404, 409, 422),
  * - request validation: 422 with the list of violations,
- * - other client errors (4xx) of JSON routes: the HTTP exception message.
+ * - other client errors (4xx) of JSON routes: the HTTP exception message,
+ * - JSON requests that match no route (404/405 from the router, Accept: application/json):
+ *   only the status text, because the router message reveals the internal scheme,
+ *   host and path behind the edge (the Allow header is kept).
  * Server errors stay with Symfony's error handling (no details in production).
  */
 #[AsEventListener]
@@ -40,7 +45,8 @@ final class ApiExceptionSubscriber
             return;
         }
 
-        if (!$exception instanceof HttpExceptionInterface || 'json' !== $event->getRequest()->getRequestFormat()) {
+        $request = $event->getRequest();
+        if (!$exception instanceof HttpExceptionInterface || 'json' !== $request->getRequestFormat($request->getPreferredFormat())) {
             return;
         }
         $status = $exception->getStatusCode();
@@ -48,10 +54,12 @@ final class ApiExceptionSubscriber
             return;
         }
 
-        $validation = $exception->getPrevious();
-        $response = $validation instanceof ValidationFailedException
-            ? $this->validationProblem($status, $validation)
-            : Problem::response($status, $exception->getMessage());
+        $previous = $exception->getPrevious();
+        $response = match (true) {
+            $previous instanceof ValidationFailedException => $this->validationProblem($status, $previous),
+            $previous instanceof ResourceNotFoundException, $previous instanceof MethodNotAllowedException => Problem::response($status, Response::$statusTexts[$status] ?? 'Error'),
+            default => Problem::response($status, $exception->getMessage()),
+        };
         $response->headers->add($exception->getHeaders());
         $event->setResponse($response);
     }

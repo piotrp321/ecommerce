@@ -9,7 +9,10 @@ Ten plik jest też plikiem recepty `symfony/framework-bundle` (patrz `symfony.lo
 
 - Wersje i zainstalowane pakiety: `composer.json`, `symfony.lock`. Nie zakładaj, że pakiet jest zainstalowany (np. Twig, Messenger, maker-bundle), dopóki tam go nie ma.
 - Logika biznesowa (ceny, stany magazynowe, zamówienia, płatności) jest wyłącznie w backendzie. Frontendy jej nie duplikują.
-- Kontrakt REST API: [`docs/api/openapi.yaml`](../../docs/api/openapi.yaml). Każdą zmianę endpointu lub formatu JSON wprowadzaj w tym samym commicie w kontrakcie.
+- Kontrakt REST API: [`docs/api/openapi.yaml`](../../docs/api/openapi.yaml). Każdą zmianę endpointu lub formatu JSON wprowadzaj w tym samym commicie w kontrakcie. Testy to wymuszają ([ADR-0007](../../docs/adr/0007-api-contract-tests.md)):
+  - każda odpowiedź z `ApiTestCase::request()` jest walidowana względem kontraktu (status, `Content-Type`, schemat JSON),
+  - `ApiRoutesMatchContractTest` wymaga, żeby trasy Symfony i operacje kontraktu były identyczne,
+  - `make contract-lint` (Redocly, część `make check`) sprawdza poprawność kontraktu.
 
 ## Komendy
 
@@ -78,5 +81,6 @@ Modularny monolit, DDD + architektura heksagonalna (Clean Architecture). Reguły
 
 - `src/<Moduł>/<Warstwa>/`: kod aplikacji; moduły `Catalog`, `Inventory` i `Shared` (`Money`, `VatRate`, problem details, bezpieczeństwo API, `/health`)
 - mapowania Doctrine: `src/<Moduł>/Infrastructure/Persistence/Doctrine/Mapping/*.orm.xml`, typy DBAL dla value objects z `#[AsDbalType]`
+- `tests/Support/Contract/`: walidacja odpowiedzi względem kontraktu (kontrakt montowany w kontenerze dev jako `/contract`)
 - `tests/Unit/` (bez kernela), `tests/Integration/` (`KernelTestCase` z bazą: repozytoria, zapytania, schemat), `tests/Functional/` (`WebTestCase`, HTTP): struktura katalogów odzwierciedla `src/`; `tests/Support/`: wspólne klasy testów (czyszczenie bazy, fixtures, repozytoria w pamięci)
 - Obraz Docker backendu: `infra/docker/backend/` (Dockerfile, Caddyfile, PHP ini, entrypoint prod)

@@ -1,0 +1,12 @@
+# Lint of the API contract (make contract-lint). recommended-strict turns every
+# recommended rule into an error, so warnings cannot accumulate unnoticed.
+apis:
+  main:
+    root: docs/api/openapi.yaml
+
+extends:
+  - recommended-strict
+
+rules:
+  # Proprietary project: no SPDX identifier or public license URL to point to.
+  info-license-strict: off

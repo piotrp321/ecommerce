@@ -19,6 +19,8 @@ services:
       APP_ENV: dev
     volumes:
       - ./apps/backend:/app
+      # API contract for the contract tests (read-only, development only).
+      - ./docs/api:/contract:ro
       - ./infra/docker/backend/Caddyfile:/etc/frankenphp/Caddyfile:ro
       - ./infra/docker/backend/conf.d/20-app.dev.ini:/usr/local/etc/php/app.conf.d/20-app.dev.ini:ro
     ports:

@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 namespace App\Tests\Support;
 
+use App\Tests\Support\Contract\OpenApiContract;
 use Symfony\Bundle\FrameworkBundle\KernelBrowser;
 use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
 
 /**
  * HTTP tests of the JSON API on an emptied test database.
+ * Every response obtained through request() is validated against the API contract
+ * (docs/api/openapi.yaml): documented status, Content-Type and JSON Schema.
  */
 abstract class ApiTestCase extends WebTestCase
 {
@@ -36,6 +39,7 @@ abstract class ApiTestCase extends WebTestCase
             $server['HTTP_AUTHORIZATION'] = 'Bearer '.self::adminToken();
         }
         $this->client->request($method, $uri, server: $server, content: null === $body ? null : json_encode($body, \JSON_THROW_ON_ERROR));
+        $this->assertResponseMatchesContract($method, $uri);
 
         return $this->responseJson();
     }
@@ -80,6 +84,22 @@ abstract class ApiTestCase extends WebTestCase
         }
 
         return $value;
+    }
+
+    /**
+     * Asserts that the last response conforms to the operation documented in docs/api/openapi.yaml.
+     */
+    protected function assertResponseMatchesContract(string $method, string $uri): void
+    {
+        $response = $this->client->getResponse();
+        $problems = OpenApiContract::get()->validateResponse(
+            $method,
+            (string) parse_url($uri, \PHP_URL_PATH),
+            $response->getStatusCode(),
+            $response->headers->get('Content-Type'),
+            (string) $response->getContent(),
+        );
+        self::assertSame([], $problems, 'Response does not match docs/api/openapi.yaml');
     }
 
     protected function assertStatus(int $status): void
