@@ -72,6 +72,9 @@ services:
       target: store_dev
     environment:
       STORE_DEV_POLLING: ${STORE_DEV_POLLING:-0}
+      # Catalog from the backend inside the Compose network (ADR-0009). Unset: the API;
+      # STORE_BACKEND_URL= (empty, e.g. in .env) selects the demo data.
+      STORE_BACKEND_URL: ${STORE_BACKEND_URL-http://backend:80}
     volumes:
       - ./:/workspace
       # Same node_modules volumes as admin, plus the Next.js build cache.

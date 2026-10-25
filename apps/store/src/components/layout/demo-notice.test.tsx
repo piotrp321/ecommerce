@@ -3,7 +3,7 @@ import { catalog } from '@/catalog';
 import { DemoNotice } from './demo-notice';
 
 describe('demo labelling', () => {
-  it('the active catalog source is the demo one', () => {
+  it('without STORE_BACKEND_URL the active catalog source is the demo one', () => {
     expect(catalog.isDemo).toBe(true);
   });
 

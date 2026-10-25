@@ -68,6 +68,11 @@ services:
     image: ${IMAGES_PREFIX:-}ecommerce-store
     build:
       target: store_prod
+    environment:
+      # Server to server inside the network, without the edge and the /api prefix (ADR-0009).
+      # Unset: the API; STORE_BACKEND_URL= (empty) selects the demo data. No depends_on:
+      # the store is deployed independently and shows an error page while the backend is down.
+      STORE_BACKEND_URL: ${STORE_BACKEND_URL-http://backend:80}
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
