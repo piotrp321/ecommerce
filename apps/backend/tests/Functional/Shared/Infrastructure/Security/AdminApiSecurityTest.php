@@ -109,6 +109,15 @@ final class AdminApiSecurityTest extends ApiTestCase
         $this->assertProblem(401);
     }
 
+    public function testDeniesEverythingWhenTheTokenIsNotConfiguredAtAll(): void
+    {
+        $this->configureToken(null);
+
+        $this->client->request('GET', '/admin/catalog/products', server: ['HTTP_AUTHORIZATION' => 'Bearer x']);
+
+        $this->assertProblem(401);
+    }
+
     public function testDeniesEverythingWithATooShortConfiguredToken(): void
     {
         $shortToken = str_repeat('a', AdminApiTokenHandler::MIN_TOKEN_LENGTH - 1);
@@ -150,10 +159,14 @@ final class AdminApiSecurityTest extends ApiTestCase
         }
     }
 
-    private function configureToken(string $token): void
+    private function configureToken(?string $token): void
     {
         $this->originalToken = [$_SERVER['ADMIN_API_TOKEN'] ?? null, $_ENV['ADMIN_API_TOKEN'] ?? null];
-        $_SERVER['ADMIN_API_TOKEN'] = $_ENV['ADMIN_API_TOKEN'] = $token;
+        if (null === $token) {
+            unset($_SERVER['ADMIN_API_TOKEN'], $_ENV['ADMIN_API_TOKEN']);
+        } else {
+            $_SERVER['ADMIN_API_TOKEN'] = $_ENV['ADMIN_API_TOKEN'] = $token;
+        }
         self::ensureKernelShutdown();
         $this->client = static::createClient();
     }
