@@ -10,7 +10,8 @@ final readonly class CategoryRecord
         public string $id,
         public string $slug,
         public string $name,
-        /** All products in the category, active or not. */
+        public ?string $parentId,
+        /** Products directly in the category, active or not. */
         public int $productCount,
     ) {
     }

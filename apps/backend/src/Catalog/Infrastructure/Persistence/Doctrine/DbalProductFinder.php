@@ -32,6 +32,16 @@ final readonly class DbalProductFinder implements ProductFinder
      */
     private const string GROSS_PRICE = '(p.net_price::bigint * (100 + p.vat_rate) + 50) / 100';
 
+    /** Products of a category (selected by %s) and of all its descendants. */
+    private const string IN_SUBTREE = 'p.category_id IN (
+        WITH RECURSIVE subtree(id) AS (
+            SELECT id FROM catalog_category WHERE %s
+            UNION
+            SELECT c.id FROM catalog_category c JOIN subtree s ON c.parent_id = s.id
+        )
+        SELECT id FROM subtree
+    )';
+
     public function __construct(private Connection $connection)
     {
     }
@@ -102,13 +112,15 @@ final readonly class DbalProductFinder implements ProductFinder
             ProductStatusFilter::Inactive => $query->andWhere('NOT p.active'),
         };
         if (null !== $criteria->categorySlug) {
-            $query->andWhere('c.slug = :categorySlug')->setParameter('categorySlug', $criteria->categorySlug);
+            $query->andWhere(\sprintf(self::IN_SUBTREE, 'slug = :categorySlug'))
+                ->setParameter('categorySlug', $criteria->categorySlug);
         }
         if (null !== $criteria->categoryId) {
             if (!Uuid::isValid($criteria->categoryId)) {
                 $query->andWhere('FALSE');
             } else {
-                $query->andWhere('p.category_id = :categoryId')->setParameter('categoryId', $criteria->categoryId);
+                $query->andWhere(\sprintf(self::IN_SUBTREE, 'id = :categoryId'))
+                    ->setParameter('categoryId', $criteria->categoryId);
             }
         }
         if (null !== $criteria->search) {

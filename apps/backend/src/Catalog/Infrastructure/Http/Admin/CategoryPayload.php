@@ -8,6 +8,10 @@ use App\Catalog\Domain\Category\Category;
 use App\Catalog\Domain\Slug;
 use Symfony\Component\Validator\Constraints as Assert;
 
+/**
+ * Body of category create (with an optional parent) and update (slug and name;
+ * the parent changes only through the move operation).
+ */
 final readonly class CategoryPayload
 {
     public function __construct(
@@ -18,6 +22,9 @@ final readonly class CategoryPayload
         #[Assert\NotBlank(normalizer: 'trim')]
         #[Assert\Length(max: Category::NAME_MAX_LENGTH)]
         public string $name,
+        #[Assert\Uuid]
+        #[Assert\IsNull(groups: ['update'], message: 'Use the move operation to change the parent.')]
+        public ?string $parentId = null,
     ) {
     }
 }

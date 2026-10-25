@@ -12,7 +12,9 @@ final readonly class ProductCriteria
 
     public function __construct(
         public ProductStatusFilter $status = ProductStatusFilter::All,
+        /** Products of this category and of all its subcategories. */
         public ?string $categorySlug = null,
+        /** Products of this category and of all its subcategories. */
         public ?string $categoryId = null,
         /** Case-insensitive substring of the name or SKU. */
         public ?string $search = null,

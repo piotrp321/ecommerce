@@ -7,7 +7,9 @@ namespace App\Tests\Unit\Catalog\Application\Category;
 use App\Catalog\Application\Category\CategoryHandler;
 use App\Catalog\Domain\Category\CategoryId;
 use App\Catalog\Domain\Category\CategoryNotEmpty;
+use App\Catalog\Domain\Category\CategoryCycle;
 use App\Catalog\Domain\Category\CategoryNotFound;
+use App\Catalog\Domain\Category\CategoryPlacement;
 use App\Catalog\Domain\Category\DuplicateCategorySlug;
 use App\Catalog\Domain\Product\Product;
 use App\Catalog\Domain\Product\ProductId;
@@ -29,7 +31,7 @@ final class CategoryHandlerTest extends TestCase
     {
         $this->categories = new InMemoryCategoryRepository();
         $this->products = new InMemoryProductRepository();
-        $this->handler = new CategoryHandler($this->categories, $this->products);
+        $this->handler = new CategoryHandler($this->categories, $this->products, new CategoryPlacement($this->categories));
     }
 
     public function testCreatesAndUpdatesACategory(): void
@@ -86,6 +88,44 @@ final class CategoryHandlerTest extends TestCase
         $this->expectException(CategoryNotEmpty::class);
 
         $this->handler->delete($id->value);
+    }
+
+    public function testCreatesASubcategoryAndMovesItToAnotherBranch(): void
+    {
+        $electronics = $this->handler->create('electronics', 'Electronics');
+        $phones = $this->handler->create('phones', 'Phones', $electronics->value);
+        $smartphones = $this->handler->create('smartphones', 'Smartphones', $phones->value);
+        $mobile = $this->handler->create('mobile', 'Mobile');
+
+        $this->handler->move($phones->value, $mobile->value);
+
+        self::assertTrue($mobile->equals($this->categories->get($phones)->parentId() ?? CategoryId::generate()));
+        self::assertEquals([$phones, $mobile], $this->categories->ancestorIds($smartphones));
+
+        $this->handler->move($phones->value, null);
+        self::assertNull($this->categories->get($phones)->parentId());
+    }
+
+    public function testDoesNotMoveACategoryUnderItsDescendant(): void
+    {
+        $electronics = $this->handler->create('electronics', 'Electronics');
+        $phones = $this->handler->create('phones', 'Phones', $electronics->value);
+        $smartphones = $this->handler->create('smartphones', 'Smartphones', $phones->value);
+
+        $this->expectException(CategoryCycle::class);
+
+        $this->handler->move($electronics->value, $smartphones->value);
+    }
+
+    public function testDoesNotDeleteACategoryWithSubcategories(): void
+    {
+        $electronics = $this->handler->create('electronics', 'Electronics');
+        $this->handler->create('phones', 'Phones', $electronics->value);
+
+        $this->expectException(CategoryNotEmpty::class);
+        $this->expectExceptionMessage('subcategories');
+
+        $this->handler->delete($electronics->value);
     }
 
     public function testDeletingAMissingCategoryFails(): void

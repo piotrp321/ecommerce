@@ -189,12 +189,124 @@ final class AdminCatalogApiTest extends ApiTestCase
         self::assertSame('categories/'.$id, $this->client->getResponse()->headers->get('Location'));
 
         self::assertSame(
-            ['id' => $id, 'slug' => 'teas', 'name' => 'Teas', 'productCount' => 0],
+            ['id' => $id, 'slug' => 'teas', 'name' => 'Teas', 'parentId' => null, 'productCount' => 0, 'ancestors' => [], 'children' => []],
             $this->admin('PUT', '/admin/catalog/categories/'.$id, ['slug' => 'teas', 'name' => 'Teas']),
         );
         $this->createProduct(['categoryId' => $id], active: false);
-        self::assertSame(['items' => [['id' => $id, 'slug' => 'teas', 'name' => 'Teas', 'productCount' => 1]]], $this->admin('GET', '/admin/catalog/categories'));
+        self::assertSame(
+            ['items' => [['id' => $id, 'slug' => 'teas', 'name' => 'Teas', 'parentId' => null, 'productCount' => 1, 'children' => []]]],
+            $this->admin('GET', '/admin/catalog/categories'),
+        );
         self::assertSame(1, $this->admin('GET', '/admin/catalog/categories/'.$id)['productCount']);
+    }
+
+    public function testBuildsATree(): void
+    {
+        $electronics = $this->createCategory('electronics', 'Electronics');
+        $phones = $this->createCategory('phones', 'Phones', $electronics);
+
+        $smartphones = $this->admin('POST', '/admin/catalog/categories', ['slug' => 'smartphones', 'name' => 'Smartphones', 'parentId' => $phones]);
+
+        $this->assertStatus(201);
+        self::assertSame($phones, $smartphones['parentId']);
+        self::assertSame([
+            ['id' => $electronics, 'slug' => 'electronics', 'name' => 'Electronics'],
+            ['id' => $phones, 'slug' => 'phones', 'name' => 'Phones'],
+        ], $smartphones['ancestors']);
+
+        $tree = $this->admin('GET', '/admin/catalog/categories');
+        self::assertSame($phones, self::at($tree, 'items', 0, 'children', 0, 'id'));
+        self::assertSame($smartphones['id'], self::at($tree, 'items', 0, 'children', 0, 'children', 0, 'id'));
+    }
+
+    public function testRejectsAnUnknownParentAndAParentChangeThroughUpdate(): void
+    {
+        $this->admin('POST', '/admin/catalog/categories', ['slug' => 'phones', 'name' => 'Phones', 'parentId' => '0192f0c4-7c2a-7c51-9b1e-000000000000']);
+        $this->assertProblem(422, 'does not exist');
+
+        $electronics = $this->createCategory('electronics', 'Electronics');
+        $phones = $this->createCategory('phones', 'Phones');
+        $this->admin('PUT', '/admin/catalog/categories/'.$phones, ['slug' => 'phones', 'name' => 'Phones', 'parentId' => $electronics]);
+        $this->assertProblem(422, 'move');
+    }
+
+    public function testMovesACategoryWithItsSubtreeAndProducts(): void
+    {
+        $electronics = $this->createCategory('electronics', 'Electronics');
+        $phones = $this->createCategory('phones', 'Phones', $electronics);
+        $smartphones = $this->createCategory('smartphones', 'Smartphones', $phones);
+        $mobile = $this->createCategory('mobile', 'Mobile');
+        $this->createProduct(['categoryId' => $smartphones]);
+
+        $moved = $this->admin('POST', '/admin/catalog/categories/'.$phones.'/move', ['parentId' => $mobile]);
+
+        $this->assertStatus(200);
+        self::assertSame($mobile, $moved['parentId']);
+        self::assertSame($smartphones, self::at($moved, 'children', 0, 'id'));
+        $ancestors = self::at($this->admin('GET', '/admin/catalog/categories/'.$smartphones), 'ancestors');
+        self::assertIsArray($ancestors);
+        self::assertSame(['mobile', 'phones'], array_column($ancestors, 'slug'));
+        self::assertSame(1, $this->admin('GET', '/admin/catalog/products?category='.$mobile)['totalItems']);
+        self::assertSame(0, $this->admin('GET', '/admin/catalog/products?category='.$electronics)['totalItems']);
+
+        $root = $this->admin('POST', '/admin/catalog/categories/'.$phones.'/move', ['parentId' => null]);
+        $this->assertStatus(200);
+        self::assertNull($root['parentId']);
+    }
+
+    public function testRejectsMovesThatWouldCreateACycle(): void
+    {
+        $electronics = $this->createCategory('electronics', 'Electronics');
+        $phones = $this->createCategory('phones', 'Phones', $electronics);
+        $smartphones = $this->createCategory('smartphones', 'Smartphones', $phones);
+
+        $this->admin('POST', '/admin/catalog/categories/'.$electronics.'/move', ['parentId' => $smartphones]);
+        $this->assertProblem(409, 'subcategories');
+
+        $this->admin('POST', '/admin/catalog/categories/'.$phones.'/move', ['parentId' => $phones]);
+        $this->assertProblem(409, 'own parent');
+
+        $this->admin('POST', '/admin/catalog/categories/'.$phones.'/move', ['parentId' => 'nope']);
+        $this->assertProblem(422);
+
+        // A missing parentId must not silently move the category to the root.
+        $this->admin('POST', '/admin/catalog/categories/'.$phones.'/move', []);
+        $this->assertProblem(422);
+        $this->admin('POST', '/admin/catalog/categories/'.$phones.'/move', ['parent' => $electronics]);
+        $this->assertProblem(422);
+        self::assertSame($electronics, $this->admin('GET', '/admin/catalog/categories/'.$phones)['parentId']);
+
+        $this->admin('POST', '/admin/catalog/categories/0192f0c4-7c2a-7c51-9b1e-000000000000/move', ['parentId' => null]);
+        $this->assertProblem(404);
+    }
+
+    public function testLimitsTheTreeToTenLevels(): void
+    {
+        $parent = null;
+        for ($level = 1; $level <= 10; ++$level) {
+            $parent = $this->createCategory('level-'.$level, 'Level '.$level, $parent);
+        }
+
+        $this->admin('POST', '/admin/catalog/categories', ['slug' => 'level-11', 'name' => 'Level 11', 'parentId' => $parent]);
+        $this->assertProblem(409, '10 levels');
+
+        $branch = $this->createCategory('branch', 'Branch');
+        $this->admin('POST', '/admin/catalog/categories/'.$branch.'/move', ['parentId' => $parent]);
+        $this->assertProblem(409, '10 levels');
+    }
+
+    public function testDoesNotDeleteACategoryWithSubcategories(): void
+    {
+        $electronics = $this->createCategory('electronics', 'Electronics');
+        $phones = $this->createCategory('phones', 'Phones', $electronics);
+
+        $this->admin('DELETE', '/admin/catalog/categories/'.$electronics);
+        $this->assertProblem(409, 'subcategories');
+
+        $this->admin('DELETE', '/admin/catalog/categories/'.$phones);
+        $this->assertStatus(204);
+        $this->admin('DELETE', '/admin/catalog/categories/'.$electronics);
+        $this->assertStatus(204);
     }
 
     public function testRejectsInvalidAndDuplicateCategories(): void

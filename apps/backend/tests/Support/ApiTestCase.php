@@ -65,6 +65,23 @@ abstract class ApiTestCase extends WebTestCase
         return $json;
     }
 
+    /**
+     * Value at a path in decoded JSON, e.g. at($tree, 'items', 0, 'children', 0, 'id').
+     *
+     * @param array<mixed> $json
+     */
+    protected static function at(array $json, string|int ...$path): mixed
+    {
+        $value = $json;
+        foreach ($path as $key) {
+            self::assertIsArray($value);
+            self::assertArrayHasKey($key, $value);
+            $value = $value[$key];
+        }
+
+        return $value;
+    }
+
     protected function assertStatus(int $status): void
     {
         self::assertSame($status, $this->client->getResponse()->getStatusCode(), (string) $this->client->getResponse()->getContent());
@@ -123,9 +140,9 @@ abstract class ApiTestCase extends WebTestCase
         return $product['id'];
     }
 
-    protected function createCategory(string $slug, string $name): string
+    protected function createCategory(string $slug, string $name, ?string $parentId = null): string
     {
-        $category = $this->admin('POST', '/admin/catalog/categories', ['slug' => $slug, 'name' => $name]);
+        $category = $this->admin('POST', '/admin/catalog/categories', ['slug' => $slug, 'name' => $name, 'parentId' => $parentId]);
         $this->assertStatus(201);
         \assert(\is_string($category['id']));
 

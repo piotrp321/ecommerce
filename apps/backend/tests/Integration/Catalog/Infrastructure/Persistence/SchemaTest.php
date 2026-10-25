@@ -7,6 +7,7 @@ namespace App\Tests\Integration\Catalog\Infrastructure\Persistence;
 use App\Catalog\Infrastructure\Persistence\Doctrine\CatalogSchemaListener;
 use App\Tests\Support\DatabaseTestCase;
 use Doctrine\DBAL\Exception\DriverException;
+use Doctrine\DBAL\Schema\ForeignKeyConstraint;
 use Doctrine\ORM\Tools\SchemaValidator;
 
 final class SchemaTest extends DatabaseTestCase
@@ -25,13 +26,35 @@ final class SchemaTest extends DatabaseTestCase
         self::assertSame([], $changes, 'Generate a migration with doctrine:migrations:diff.');
     }
 
-    public function testTheProductCategoryForeignKeyExists(): void
+    public function testTheForeignKeysOfReferencesByIdExist(): void
     {
-        $foreignKeys = self::connection()->createSchemaManager()->introspectTableForeignKeyConstraintsByUnquotedName('catalog_product');
+        $schema = self::connection()->createSchemaManager();
+        $name = static fn (ForeignKeyConstraint $key): ?string => $key->getObjectName()?->getIdentifier()->getValue();
 
         self::assertSame(
             [CatalogSchemaListener::PRODUCT_CATEGORY_FOREIGN_KEY],
-            array_map(static fn ($key): ?string => $key->getObjectName()?->getIdentifier()->getValue(), $foreignKeys),
+            array_map($name, $schema->introspectTableForeignKeyConstraintsByUnquotedName('catalog_product')),
+        );
+        self::assertSame(
+            [CatalogSchemaListener::CATEGORY_PARENT_FOREIGN_KEY],
+            array_map($name, $schema->introspectTableForeignKeyConstraintsByUnquotedName('catalog_category')),
+        );
+    }
+
+    public function testTheTreeGuardRejectsCyclesWrittenDirectly(): void
+    {
+        $connection = self::connection();
+        $connection->executeStatement(
+            "INSERT INTO catalog_category (id, slug, name, parent_id) VALUES
+             ('0192f0c4-0000-7000-8000-000000000001', 'a', 'A', NULL),
+             ('0192f0c4-0000-7000-8000-000000000002', 'b', 'B', '0192f0c4-0000-7000-8000-000000000001')",
+        );
+
+        $this->expectCheckViolation(
+            "UPDATE catalog_category SET parent_id = '0192f0c4-0000-7000-8000-000000000002' WHERE id = '0192f0c4-0000-7000-8000-000000000001'",
+        );
+        $this->expectCheckViolation(
+            "UPDATE catalog_category SET parent_id = id WHERE id = '0192f0c4-0000-7000-8000-000000000002'",
         );
     }
 

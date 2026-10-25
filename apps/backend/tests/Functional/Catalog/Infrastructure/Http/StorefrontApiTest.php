@@ -105,19 +105,61 @@ final class StorefrontApiTest extends ApiTestCase
         $this->assertProblem(404);
     }
 
-    public function testListsAndShowsCategories(): void
+    public function testShowsTheCategoryTreeAndSubtrees(): void
     {
-        $tea = $this->createCategory('tea', 'Tea');
-        $coffee = $this->createCategory('coffee', 'Coffee');
+        $electronics = $this->createCategory('electronics', 'Electronics');
+        $phones = $this->createCategory('phones', 'Phones', $electronics);
+        $smartphones = $this->createCategory('smartphones', 'Smartphones', $phones);
+        $books = $this->createCategory('books', 'Books');
 
         self::assertSame(['items' => [
-            ['id' => $coffee, 'slug' => 'coffee', 'name' => 'Coffee'],
-            ['id' => $tea, 'slug' => 'tea', 'name' => 'Tea'],
+            ['id' => $books, 'slug' => 'books', 'name' => 'Books', 'children' => []],
+            ['id' => $electronics, 'slug' => 'electronics', 'name' => 'Electronics', 'children' => [
+                ['id' => $phones, 'slug' => 'phones', 'name' => 'Phones', 'children' => [
+                    ['id' => $smartphones, 'slug' => 'smartphones', 'name' => 'Smartphones', 'children' => []],
+                ]],
+            ]],
         ]], $this->request('GET', '/catalog/categories'));
-        self::assertSame(['id' => $tea, 'slug' => 'tea', 'name' => 'Tea'], $this->request('GET', '/catalog/categories/tea'));
+
+        self::assertSame([
+            'id' => $phones,
+            'slug' => 'phones',
+            'name' => 'Phones',
+            'ancestors' => [['id' => $electronics, 'slug' => 'electronics', 'name' => 'Electronics']],
+            'children' => [['id' => $smartphones, 'slug' => 'smartphones', 'name' => 'Smartphones', 'children' => []]],
+        ], $this->request('GET', '/catalog/categories/phones'));
 
         $this->request('GET', '/catalog/categories/missing');
         $this->assertProblem(404);
+    }
+
+    public function testACategoryListsProductsOfItsSubcategories(): void
+    {
+        $electronics = $this->createCategory('electronics', 'Electronics');
+        $phones = $this->createCategory('phones', 'Phones', $electronics);
+        $smartphones = $this->createCategory('smartphones', 'Smartphones', $phones);
+        $this->createProduct(['sku' => 'TV', 'slug' => 'tv', 'name' => 'TV', 'categoryId' => $electronics]);
+        $this->createProduct(['sku' => 'PIXEL', 'slug' => 'pixel', 'name' => 'Pixel', 'categoryId' => $smartphones]);
+        $this->createProduct(['sku' => 'BOOK', 'slug' => 'book', 'name' => 'Book']);
+
+        self::assertSame(['PIXEL', 'TV'], $this->skus('/catalog/products?category=electronics'));
+        self::assertSame(['PIXEL'], $this->skus('/catalog/products?category=phones'));
+    }
+
+    public function testThePublicApiDoesNotDiscloseStockQuantities(): void
+    {
+        $category = $this->createCategory('tea', 'Tea');
+        $this->createProduct(['categoryId' => $category], onHand: 7);
+
+        foreach (['/catalog/products', '/catalog/products/green-tea', '/catalog/categories', '/catalog/categories/tea'] as $uri) {
+            $this->request('GET', $uri);
+            $this->assertStatus(200);
+            $json = (string) $this->client->getResponse()->getContent();
+            foreach (['onHand', 'reserved', 'available', 'stock', 'productCount', '"active"'] as $field) {
+                self::assertStringNotContainsString($field, $json, \sprintf('%s discloses "%s".', $uri, $field));
+            }
+        }
+        self::assertTrue($this->request('GET', '/catalog/products/green-tea')['inStock']);
     }
 
     /**

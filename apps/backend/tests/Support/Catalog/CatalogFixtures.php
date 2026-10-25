@@ -26,9 +26,9 @@ final readonly class CatalogFixtures
     ) {
     }
 
-    public function category(string $slug, ?string $name = null): Category
+    public function category(string $slug, ?string $name = null, ?Category $parent = null): Category
     {
-        $category = Category::create(CategoryId::generate(), new Slug($slug), $name ?? ucfirst($slug));
+        $category = Category::create(CategoryId::generate(), new Slug($slug), $name ?? ucfirst($slug), $parent?->id());
         $this->categories->save($category);
 
         return $category;

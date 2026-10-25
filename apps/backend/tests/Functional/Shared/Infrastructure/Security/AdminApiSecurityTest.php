@@ -41,6 +41,7 @@ final class AdminApiSecurityTest extends ApiTestCase
             ['GET', '/admin/catalog/categories/'.self::PRODUCT],
             ['PUT', '/admin/catalog/categories/'.self::PRODUCT],
             ['DELETE', '/admin/catalog/categories/'.self::PRODUCT],
+            ['POST', '/admin/catalog/categories/'.self::PRODUCT.'/move'],
             ['GET', '/admin/inventory/stock/'.self::PRODUCT],
             ['PUT', '/admin/inventory/stock/'.self::PRODUCT],
         ] as [$method, $uri]) {

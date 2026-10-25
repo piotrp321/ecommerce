@@ -3,7 +3,11 @@
                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                   xsi:schemaLocation="http://doctrine-project.org/schemas/orm/doctrine-mapping
                   https://www.doctrine-project.org/schemas/orm/doctrine-mapping.xsd">
+    <!-- Tree as an adjacency list; the parent foreign key and the cycle guard trigger come from CatalogSchemaListener and the migration. -->
     <entity name="App\Catalog\Domain\Category\Category" table="catalog_category">
+        <indexes>
+            <index name="catalog_category_parent_id_idx" columns="parent_id"/>
+        </indexes>
         <unique-constraints>
             <unique-constraint name="catalog_category_slug_key" columns="slug"/>
         </unique-constraints>
@@ -11,5 +15,6 @@
         <id name="id" type="catalog_category_id"/>
         <field name="slug" type="catalog_slug" length="120"/>
         <field name="name" type="string" length="100"/>
+        <field name="parentId" column="parent_id" type="catalog_category_id" nullable="true"/>
     </entity>
 </doctrine-mapping>

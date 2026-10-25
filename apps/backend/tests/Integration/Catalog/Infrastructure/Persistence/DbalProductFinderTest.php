@@ -82,6 +82,21 @@ final class DbalProductFinderTest extends DatabaseTestCase
         self::assertSame([], $this->names(search: '_'));
     }
 
+    public function testACategoryFilterIncludesAllSubcategories(): void
+    {
+        $electronics = $this->fixtures->category('electronics');
+        $phones = $this->fixtures->category('phones', parent: $electronics);
+        $smartphones = $this->fixtures->category('smartphones', parent: $phones);
+        $this->fixtures->product('TV', name: 'TV', category: $electronics);
+        $this->fixtures->product('DECT', name: 'DECT phone', category: $phones);
+        $this->fixtures->product('PIXEL', name: 'Pixel', category: $smartphones);
+        $this->fixtures->product('BOOK', name: 'Book');
+
+        self::assertSame(['DECT phone', 'Pixel', 'TV'], $this->names(categorySlug: 'electronics'));
+        self::assertSame(['DECT phone', 'Pixel'], $this->names(categoryId: $phones->id()->value));
+        self::assertSame(['Pixel'], $this->names(categorySlug: 'smartphones'));
+    }
+
     public function testSortsByGrossPriceAndPaginates(): void
     {
         // Gross prices: 12.30, 10.80, 11.00 (net order differs from gross order).

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Catalog\Infrastructure\Http;
 
+use App\Catalog\Application\Query\CategoryDetails;
+use App\Catalog\Application\Query\CategoryNode;
 use App\Catalog\Application\Query\CategoryRecord;
 use App\Catalog\Application\Query\CategoryRef;
 use App\Catalog\Application\Query\Page;
@@ -70,19 +72,47 @@ final class CatalogJson
     }
 
     /**
+     * A category with its subcategories, recursively.
+     *
      * @return array<string, mixed>
      */
-    public static function publicCategory(CategoryRecord $category): array
+    public static function publicCategoryNode(CategoryNode $node): array
     {
-        return ['id' => $category->id, 'slug' => $category->slug, 'name' => $category->name];
+        return self::publicCategory($node->category) + [
+            'children' => array_map(self::publicCategoryNode(...), $node->children),
+        ];
     }
 
     /**
      * @return array<string, mixed>
      */
-    public static function adminCategory(CategoryRecord $category): array
+    public static function publicCategoryDetails(CategoryDetails $details): array
     {
-        return self::publicCategory($category) + ['productCount' => $category->productCount];
+        return self::publicCategory($details->node->category) + [
+            'ancestors' => array_map(self::publicCategory(...), $details->ancestors),
+            'children' => array_map(self::publicCategoryNode(...), $details->node->children),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public static function adminCategoryNode(CategoryNode $node): array
+    {
+        return self::adminCategory($node->category) + [
+            'children' => array_map(self::adminCategoryNode(...), $node->children),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public static function adminCategoryDetails(CategoryDetails $details): array
+    {
+        return self::adminCategory($details->node->category) + [
+            'ancestors' => array_map(self::publicCategory(...), $details->ancestors),
+            'children' => array_map(self::adminCategoryNode(...), $details->node->children),
+        ];
     }
 
     /**
@@ -101,6 +131,25 @@ final class CatalogJson
             'perPage' => $page->perPage,
             'totalItems' => $page->totalItems,
             'totalPages' => $page->totalPages(),
+        ];
+    }
+
+    /**
+     * @return array{id: string, slug: string, name: string}
+     */
+    private static function publicCategory(CategoryRecord $category): array
+    {
+        return ['id' => $category->id, 'slug' => $category->slug, 'name' => $category->name];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private static function adminCategory(CategoryRecord $category): array
+    {
+        return self::publicCategory($category) + [
+            'parentId' => $category->parentId,
+            'productCount' => $category->productCount,
         ];
     }
 
