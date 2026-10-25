@@ -3,6 +3,8 @@
 - Status: accepted
 - Date: 2026-10-25
 
+> **Continued by [ADR-0009](0009-store-catalog-api.md):** the store reads the catalog from the backend API when `STORE_BACKEND_URL` is set at runtime. The demo source and its labels remain for an unset or empty variable.
+
 ## Context
 
 The store ([ADR-0003](0003-store-nextjs.md)) gets its first real interface: a home page, a category tree, product listings (filtered by a category and its subcategories, sorted, paginated) and product pages. Constraints:

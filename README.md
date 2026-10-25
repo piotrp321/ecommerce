@@ -54,6 +54,45 @@ W dev wszystkie porty (80, 443, 3000, 5173, 5432) są dostępne tylko z `127.0.0
 {"status":"ok","database":"ok"}
 ```
 
+### Sklep: katalog z API albo dane demo
+
+Katalog sklepu pochodzi z publicznego API backendu albo z danych demonstracyjnych. Decyduje o tym zmienna serwerowa `STORE_BACKEND_URL`, czytana przy starcie serwera, bez przebudowy ([ADR-0009](docs/adr/0009-store-catalog-api.md)):
+
+| `STORE_BACKEND_URL` | Katalog |
+|---|---|
+| adres http(s) backendu, np. `http://backend:80` | API backendu, bez oznaczeń demo |
+| nieustawiona albo pusta | dane demonstracyjne z komunikatem „Wersja demonstracyjna” i `noindex` |
+
+- **Docker:** `compose.override.yaml` i `compose.prod.yaml` ustawiają domyślnie `http://backend:80` (wywołanie w sieci Compose, bez edge i bez `/api`). Tryb demo włączysz pustą wartością: dopisz `STORE_BACKEND_URL=` do `.env` w katalogu głównym albo wyeksportuj ją, potem `make up`. Usunięcie wpisu przywraca API.
+- **Lokalnie (macOS):** bez zmiennej `pnpm dev:store` pokazuje dane demo. Żeby użyć API backendu dev (HTTPS z lokalnym CA Caddy):
+
+  ```bash
+  docker compose cp backend:/data/caddy/pki/authorities/local/root.crt /tmp/caddy-root.crt
+  STORE_BACKEND_URL=https://localhost NODE_EXTRA_CA_CERTS=/tmp/caddy-root.crt pnpm dev:store
+  ```
+
+- **Awaria backendu:** strony sklepu zwracają stronę błędu (HTTP 500), nigdy pustego katalogu ani danych demo. Kontener sklepu zostaje zdrowy, bo `HEALTHCHECK` sprawdza tylko `/healthz` (żywotność procesu Next.js).
+
+Po `make bootstrap` katalog w backendzie jest pusty. Dane dodasz przez administracyjne API z tymczasowym tokenem ([ADR-0005](docs/adr/0005-catalog-inventory-and-admin-api-access.md)):
+
+```bash
+# Raz: token tylko w apps/backend/.env.local (ignorowany przez git), nigdy w repozytorium.
+echo "ADMIN_API_TOKEN=$(openssl rand -hex 32)" >> apps/backend/.env.local
+TOKEN="$(grep '^ADMIN_API_TOKEN=' apps/backend/.env.local | cut -d= -f2)"
+API=https://localhost   # backend dev; -k akceptuje lokalny certyfikat Caddy
+
+curl -k -X POST "$API/admin/catalog/categories" -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"slug":"kuchnia","name":"Kuchnia"}'          # zwraca "id" kategorii
+curl -k -X POST "$API/admin/catalog/products" -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"sku":"KUB-01","slug":"kubek","name":"Kubek","netPrice":"40.00","vatRate":23,"categoryId":"<id kategorii>"}'
+curl -k -X POST "$API/admin/catalog/products/<id produktu>/activate" -H "Authorization: Bearer $TOKEN"   # produkty powstają nieaktywne
+curl -k -X PUT "$API/admin/inventory/stock/<id produktu>" -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"onHand":10}'
+```
+
+Sklep pokaże produkt „Kubek” z ceną brutto 49,20 zł wyliczoną przez backend. Pełny opis operacji jest w [`docs/api/openapi.yaml`](docs/api/openapi.yaml).
+
 ### Przejście z układu sprzed monorepo
 
 Po aktualizacji z wersji, w której Symfony było w katalogu głównym:
@@ -186,6 +225,7 @@ Obrazy nie zawierają sekretów ani wartości z `.env`. Konfigurację podaje si�
 | `STORE_DOMAIN` | tak | Domena sklepu, np. `shop.example.com` |
 | `ADMIN_DOMAIN` | tak | Domena panelu, np. `admin.example.com` |
 | `EDGE_GLOBAL_OPTIONS` | nie | Dodatkowe opcje globalne Caddy, np. `email ops@example.com` dla ACME |
+| `STORE_BACKEND_URL` | nie | Adres backendu dla serwera sklepu, domyślnie `http://backend:80`; pusta wartość włącza dane demo (sekcja „Sklep: katalog z API albo dane demo”) |
 | `PROD_HTTP_PORT`, `PROD_HTTPS_PORT`, `PROD_HTTP3_PORT` | nie | Porty edge na hoście (domyślnie 80/443) |
 
 ```bash
@@ -247,8 +287,9 @@ Obraz sprawdza osobno `make admin-check-prod` na `127.0.0.1:8081`:
 - bez capabilities, z read-only root filesystem i tmpfs na `.next/cache`,
 - z wyłączoną telemetrią.
 
-Obraz sprawdza osobno `make store-check-prod` na `127.0.0.1:8082`:
+Obraz sprawdza osobno `make store-check-prod` na `127.0.0.1:8082` (bez backendu i bez `STORE_BACKEND_URL`):
 - HTML renderowany na serwerze, renderowanie na żądanie (`no-store`),
+- dane demo z komunikatem demo i `noindex, nofollow`, `/healthz` (200, `no-store`),
 - 404 dla nieznanych ścieżek, cache assetów,
 - nagłówki bezpieczeństwa i brak `X-Powered-By`,
 - uid,
@@ -267,5 +308,6 @@ Kontrola stosu używa testowych domen `store.localhost` i `admin.localhost` z lo
 - **edge:** nagłówki (HSTS, `nosniff`, brak `Server`, `Via` i `X-Powered-By`),
 - **ekspozycję:** porty publikuje tylko edge,
 - **uprawnienia:** uid inny niż 0 we wszystkich aplikacjach, zero efektywnych capabilities w edge, sklepie i adminie,
-- **backend za edge:** `/health` przy haśle bazy ze znakami specjalnymi, migracje, kod tylko do odczytu, 503 przy zatrzymanej bazie i powrót do 200, brak hasła w logach,
+- **backend za edge:** `/health` przy haśle bazy ze znakami specjalnymi, migracje (zaraz po starcie, przed sprawdzaniem stron), kod tylko do odczytu, 503 przy zatrzymanej bazie i powrót do 200, brak hasła w logach,
+- **sklep z API:** pusty katalog z backendu (strona główna, lista, 404) bez oznaczeń demo i bez `robots`; przy zatrzymanym backendzie kontener sklepu zostaje zdrowy, `/healthz` zwraca 200, a strony 500,
 - **niezależne wdrożenia:** odtworzenie samego sklepu, admina, backendu i edge zostawia pozostałe kontenery nietknięte, a wszystkie trasy dalej działają.
