@@ -19,7 +19,8 @@ use Symfony\Component\Validator\Exception\ValidationFailedException;
  * - domain exceptions: their messages are written for API clients, so they
  *   are shown in every environment (404, 409, 422),
  * - request validation: 422 with the list of violations,
- * - other client errors (4xx) of JSON routes: the HTTP exception message.
+ * - other client errors (4xx) of JSON routes, and of JSON requests that match no
+ *   route (404/405 from the router, Accept: application/json): the HTTP exception message.
  * Server errors stay with Symfony's error handling (no details in production).
  */
 #[AsEventListener]
@@ -40,7 +41,8 @@ final class ApiExceptionSubscriber
             return;
         }
 
-        if (!$exception instanceof HttpExceptionInterface || 'json' !== $event->getRequest()->getRequestFormat()) {
+        $request = $event->getRequest();
+        if (!$exception instanceof HttpExceptionInterface || 'json' !== $request->getRequestFormat($request->getPreferredFormat())) {
             return;
         }
         $status = $exception->getStatusCode();
