@@ -16,6 +16,14 @@ Panel administracyjny: React 19 + Vite 8 + TypeScript (SPA). Uzupełnia główny
 - Żądania zmieniające stan muszą przechodzić ochronę CSRF, gdy backend ją wprowadzi.
 - Zmienne `VITE_*` trafiają do publicznego bundla: nigdy nie umieszczaj w nich sekretów. Adresy API nie są potrzebne, bo `/api` jest same-origin.
 
+## Struktura i tryb demonstracyjny
+
+- `src/api`: port danych `AdminApi` (ekrany zależą tylko od niego), `ApiError` (RFC 9457) i **tymczasowe** typy widoku (`types.ts`). Typy zastąpi SDK z OpenAPI (etap 5); nie rozbudowuj ich ręcznie poza potrzeby ekranów.
+- `src/demo`: jedyna obecna implementacja `AdminApi`, dane w pamięci karty (bez sieci i storage). Symuluje odpowiedzi błędów kontraktu tylko po to, by pokazać stany UI; nie jest źródłem reguł biznesowych. Nie liczy VAT: po zmianie ceny brutto jest nieznane (`null`), dopóki nie poda go backend.
+- Tryb demo działa w `pnpm dev:admin` i w buildzie z `VITE_ADMIN_DEMO=true`. Zwykły build produkcyjny nie zawiera danych demo i pokazuje ekran „panel niepołączony z API”.
+- Prawdziwy klient API powstanie razem z logowaniem administratorów (sesja w ciasteczkach HttpOnly, CSRF). Do tego czasu nie podłączaj zapisu do API i nie używaj `ADMIN_API_TOKEN` w przeglądarce.
+- `src/components`: komponenty prezentacyjne i design system (tokeny w `src/styles/tokens.css`); `src/features/*`: strony i formularze; `src/lib`: router na History API, formatowanie kwot (stringi dziesiętne, bez floatów), `useAsync`.
+
 ## Komendy
 
 Z katalogu głównego (Docker): `make admin-lint`, `make admin-typecheck`, `make admin-test`, `make admin-build`, `make admin-check` (część `make check`), `make admin-check-prod`.

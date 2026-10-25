@@ -1,0 +1,72 @@
+import { fireEvent, screen, within } from '@testing-library/react';
+import { renderApp } from '../../test/renderApp';
+
+async function table() {
+  return within(await screen.findByRole('table'));
+}
+
+describe('ProductsPage', () => {
+  it('lists products with decimal prices formatted as text', async () => {
+    renderApp('/products');
+    const rows = (await table()).getAllByRole('row');
+
+    expect(rows).toHaveLength(21);
+    expect(screen.getByText('1–20 z 36')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Klawiatura mechaniczna 75%' })).toBeInTheDocument();
+    // Testing Library normalises the non-breaking spaces of formatted amounts.
+    expect(screen.getAllByText(/^406,50 zł/)[0]).toBeInTheDocument();
+  });
+
+  it('searches by name or SKU and keeps the filter in the URL', async () => {
+    renderApp('/products');
+    await table();
+    const search = screen.getByRole('searchbox', { name: 'Szukaj po nazwie lub SKU' });
+
+    fireEvent.change(search, { target: { value: 'BOK-' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+
+    expect(await screen.findByText('1–4 z 4')).toBeInTheDocument();
+    expect(window.location.search).toBe('?q=BOK-');
+  });
+
+  it('shows an empty state when nothing matches', async () => {
+    renderApp('/products?q=nic-takiego');
+
+    expect(await screen.findByText('Brak produktów spełniających kryteria')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Wyczyść filtry' }));
+    expect(await screen.findByText('1–20 z 36')).toBeInTheDocument();
+  });
+
+  it('sorts by a column header', async () => {
+    renderApp('/products');
+    await table();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Produkt' }));
+
+    expect(await screen.findByRole('columnheader', { name: 'Produkt' })).toHaveAttribute('aria-sort', 'ascending');
+    expect((await table()).getAllByRole('row')[1]).toHaveTextContent('Czajnik elektryczny');
+  });
+
+  it('paginates', async () => {
+    renderApp('/products');
+    await table();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Następna strona' }));
+
+    expect(await screen.findByText('21–36 z 36')).toBeInTheDocument();
+  });
+
+  it('deactivates a product only after confirmation', async () => {
+    renderApp('/products?q=LAP-ZEN-14');
+    const row = (await screen.findByRole('link', { name: 'Laptop Zenbook 14 OLED' })).closest('tr');
+    if (row === null) throw new Error('Missing row');
+
+    fireEvent.click(within(row).getByRole('button', { name: 'Dezaktywuj Laptop Zenbook 14 OLED' }));
+    const dialog = screen.getByRole('dialog', { name: 'Dezaktywować produkt?' });
+    expect(within(row).getByText('Aktywny')).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Dezaktywuj' }));
+
+    expect(await within(row).findByText('Nieaktywny')).toBeInTheDocument();
+    expect(screen.getByText('Dezaktywowano produkt „Laptop Zenbook 14 OLED”.')).toBeInTheDocument();
+  });
+});
