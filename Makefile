@@ -1,6 +1,7 @@
 # Monorepo commands. Convention:
 # - aggregate targets without a prefix (bootstrap, up, check, check-prod...),
-# - per-application targets prefixed with the app name (backend-*, admin-*, store-*),
+# - per-application targets prefixed with the app name (backend-*, admin-*, store-*, edge-*),
+# - the whole production topology prefixed with stack-,
 # - pnpm workspace targets prefixed with pnpm-.
 # None of the targets removes volumes or data.
 
@@ -17,9 +18,10 @@ PNPM        = $(DOCKER_COMP) run --rm --no-deps admin pnpm
 .PHONY: help bootstrap build up down logs install check build-prod check-prod \
 	pnpm-install pnpm \
 	backend-sh backend-install backend-composer backend-console backend-migrate backend-db-test \
-	backend-test backend-stan backend-arch backend-check backend-build-prod backend-check-prod \
+	backend-test backend-stan backend-arch backend-check backend-build-prod \
 	admin-lint admin-typecheck admin-test admin-build admin-check admin-build-prod admin-check-prod \
-	store-lint store-typecheck store-test store-build store-check store-build-prod store-check-prod
+	store-lint store-typecheck store-test store-build store-check store-build-prod store-check-prod \
+	edge-build-prod stack-check-prod
 
 ## —— Help ———————————————————————————————————————————————————————————————————
 help: ## List available targets
@@ -44,9 +46,9 @@ install: pnpm-install backend-install ## Install the dependencies of all applica
 
 check: backend-check admin-check store-check ## Run all quality gates (required before every commit)
 
-build-prod: backend-build-prod admin-build-prod store-build-prod ## Build all production images
+build-prod: backend-build-prod admin-build-prod store-build-prod edge-build-prod ## Build all production images
 
-check-prod: backend-check-prod admin-check-prod store-check-prod ## Check all production images (backend 8080/8443, admin 8081, store 8082)
+check-prod: admin-check-prod store-check-prod stack-check-prod ## Check the prod images (admin 8081, store 8082) and the whole topology (edge 8080/8443)
 
 ## —— pnpm workspace (JavaScript apps) ———————————————————————————————————————
 pnpm-install: ## Install the workspace dependencies into the container volumes (frozen lockfile)
@@ -99,9 +101,6 @@ backend-check: ## Run the backend quality gates (validation, Deptrac, PHPStan, P
 backend-build-prod: ## Build the backend production image (dependencies installed during the build, no secrets)
 	@docker build --pull --file infra/docker/backend/Dockerfile --target frankenphp_prod --tag $(IMAGES_PREFIX)ecommerce-backend .
 
-backend-check-prod: backend-build-prod ## Run the backend prod image in an ephemeral project and check it
-	@./infra/scripts/check-prod-backend.sh
-
 ## —— Admin (apps/admin, React + Vite) ——————————————————————————————————————
 admin-lint: ## Run ESLint
 	@$(PNPM) --filter admin lint
@@ -146,3 +145,10 @@ store-build-prod: ## Build the store production image (standalone Next.js, unpri
 
 store-check-prod: store-build-prod ## Run the store prod image on 127.0.0.1:8082 and check it
 	@./infra/scripts/check-prod-store.sh
+
+## —— Edge and production topology ———————————————————————————————————————————
+edge-build-prod: ## Build the edge proxy image (Caddy, configuration baked in)
+	@docker build --pull --file infra/edge/Dockerfile --target edge_prod --tag $(IMAGES_PREFIX)ecommerce-edge .
+
+stack-check-prod: backend-build-prod admin-build-prod store-build-prod edge-build-prod ## Run the whole prod topology in an ephemeral project (edge 8080/8443) and check it
+	@./infra/scripts/check-prod-stack.sh

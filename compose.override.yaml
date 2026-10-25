@@ -8,8 +8,7 @@
 #   (Linux binaries, build cache), separate from a macOS host install, and are
 #   installed explicitly with `make pnpm-install`.
 # All ports are bound to 127.0.0.1 only, so they are not reachable from the network.
-# The admin and store services exist only in development for now; their
-# production deployment comes with the central edge proxy (stage 4).
+# In production the edge proxy (compose.prod.yaml) is the only entry point.
 
 services:
   backend:
@@ -47,11 +46,7 @@ services:
   admin:
     image: ${IMAGES_PREFIX:-}ecommerce-admin-dev
     build:
-      # Repository root as context, restricted by infra/docker/admin/Dockerfile.dockerignore.
-      context: .
-      dockerfile: infra/docker/admin/Dockerfile
       target: admin_dev
-    restart: unless-stopped
     environment:
       # /api on the dev server is proxied to the backend inside the Compose network.
       ADMIN_API_PROXY_TARGET: http://backend:80
@@ -72,11 +67,7 @@ services:
   store:
     image: ${IMAGES_PREFIX:-}ecommerce-store-dev
     build:
-      # Repository root as context, restricted by infra/docker/store/Dockerfile.dockerignore.
-      context: .
-      dockerfile: infra/docker/store/Dockerfile
       target: store_dev
-    restart: unless-stopped
     environment:
       STORE_DEV_POLLING: ${STORE_DEV_POLLING:-0}
     volumes:

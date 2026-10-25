@@ -19,7 +19,8 @@ Edukacyjny system e-commerce rozwijany jako monorepo. Projekt służy do nauki A
 | `infra/docker/backend` | Obraz backendu (FrankenPHP): Dockerfile, Caddyfile, PHP ini, entrypoint prod |
 | `infra/docker/admin` | Obraz admina: Vite dev (HMR) i produkcyjny statyczny Caddy |
 | `infra/docker/store` | Obraz sklepu: Next.js dev (HMR) i produkcyjny serwer standalone |
-| `infra/scripts` | `check-prod-backend.sh` (z tymczasowym plikiem Compose), `check-prod-admin.sh`, `check-prod-store.sh` |
+| `infra/edge` | Edge proxy (Caddy): jedyny publiczny punkt wejścia produkcji, TLS i routing |
+| `infra/scripts` | `check-prod-stack.sh` (cała topologia, z tymczasowym plikiem Compose), `check-prod-admin.sh`, `check-prod-store.sh` |
 | `docs` | Specyfikacje, roadmapa, ADR |
 | katalog główny | `compose*.yaml`, `Makefile`, pnpm workspace (`package.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml`), `.node-version`, `AGENTS.md` |
 
@@ -88,7 +89,8 @@ Inna wersja Node niż w `.node-version` kończy `pnpm install` błędem (`engine
 | `make pnpm-install` / `make pnpm c="…"` | Zależności JS do wolumenów Dockera / dowolna komenda pnpm w kontenerze |
 | `make check` | Wszystkie bramki jakości: obowiązkowe przed commitem |
 | `make build-prod` | Budowa obrazów produkcyjnych (bez sekretów) |
-| `make check-prod` | Kontrola obrazów produkcyjnych (backend 8080/8443 w tymczasowym projekcie, admin 8081, sklep 8082) |
+| `make check-prod` | Kontrola obrazów admina (8081) i sklepu (8082) oraz całej topologii prod z edge (8080/8443) |
+| `make edge-build-prod` / `make stack-check-prod` | Obraz edge / kontrola całej topologii prod |
 | `make backend-composer c="…"` / `make backend-console c="…"` | Composer i `bin/console` w kontenerze |
 | `make backend-migrate` | Migracje bazy danych (nie są uruchamiane automatycznie) |
 | `make backend-test` | PHPUnit (suity `unit` i `functional`), najpierw `make backend-db-test` |
@@ -105,7 +107,7 @@ Inna wersja Node niż w `.node-version` kończy `pnpm install` błędem (`engine
 GitHub Actions (`.github/workflows/ci.yml`) uruchamia się dla każdego Pull Requesta do `main` i po pushu na `main`, na runnerze `ubuntu-24.04`, z tokenem tylko do odczytu. Używa tych samych komend co lokalnie:
 
 - **Quality gates:** `make bootstrap` (dokładnie jak w „Uruchomienie”) i `make check` (backend: composer validate, lint, Deptrac, PHPStan max, PHPUnit; admin i sklep: ESLint, TypeScript, Vitest, build),
-- **Production images:** `make check-prod` (backend z jednorazowymi, generowanymi sekretami; admin i sklep read-only, bez capabilities).
+- **Production images:** `make check-prod` (obrazy admina i sklepu osobno, potem cała topologia z edge, z jednorazowymi, generowanymi sekretami).
 
 Workflow nie korzysta z żadnych sekretów repozytorium.
 
@@ -118,27 +120,57 @@ Obraz backendu (`infra/docker/backend/Dockerfile`) budujemy z kontekstu w katalo
 
 W obu przypadkach aplikacja jest w kontenerze w `/app`. W żadnym środowisku kontener przy starcie nie instaluje zależności ani nie wykonuje migracji.
 
+### Topologia produkcyjna
+
+```
+Internet ──80/443──► edge (Caddy, TLS)
+                      ├─ STORE_DOMAIN /api/* ──┐
+                      ├─ ADMIN_DOMAIN /api/* ──┴─► backend :80 ──► database
+                      ├─ STORE_DOMAIN /*      ───► store :3000
+                      └─ ADMIN_DOMAIN /*      ───► admin :8080
+```
+
+- **edge** (`infra/edge`, obraz `ecommerce-edge`) kończy TLS (automatyczne certyfikaty) i kieruje ruch:
+  - `https://STORE_DOMAIN/api/*` i `https://ADMIN_DOMAIN/api/*` → backend, z usuniętym prefiksem `/api` (kontrakt OpenAPI: `servers: /api`),
+  - pozostałe ścieżki → sklep albo admin,
+  - HTTP przekierowuje na HTTPS (308), a nieznane domeny nie są obsługiwane.
+- **Sieć wewnętrzna:** backend, sklep, admin i PostgreSQL nie publikują portów. Backend działa za edge na zwykłym HTTP `:80`.
+- **Uprawnienia:** wszystkie kontenery aplikacji działają jako uid 1000. Edge, sklep i admin mają `read_only`, `cap_drop: ALL` i `no-new-privileges`.
+
 ### Uruchomienie produkcyjne
 
-Obraz nie zawiera sekretów ani wartości z `.env`. Konfigurację podaje się przy uruchomieniu:
+Obrazy nie zawierają sekretów ani wartości z `.env`. Konfigurację podaje się przy uruchomieniu:
 
 | Zmienna | Wymagana | Opis |
 |---|---|---|
 | `APP_SECRET` | tak | Co najmniej 32 znaki, np. `openssl rand -hex 32` |
 | `POSTGRES_PASSWORD` | tak | Hasło bazy, przekazywane aplikacji jako `DATABASE_PASSWORD` (dowolne znaki, bez kodowania URL) |
-| `SERVER_NAME` | nie | Domena serwera (domyślnie `localhost`) |
-| `PROD_HTTP_PORT`, `PROD_HTTPS_PORT`, `PROD_HTTP3_PORT` | nie | Porty publikowane na hoście (domyślnie 80/443) |
+| `STORE_DOMAIN` | tak | Domena sklepu, np. `shop.example.com` |
+| `ADMIN_DOMAIN` | tak | Domena panelu, np. `admin.example.com` |
+| `EDGE_GLOBAL_OPTIONS` | nie | Dodatkowe opcje globalne Caddy, np. `email ops@example.com` dla ACME |
+| `PROD_HTTP_PORT`, `PROD_HTTPS_PORT`, `PROD_HTTP3_PORT` | nie | Porty edge na hoście (domyślnie 80/443) |
 
 ```bash
 make build-prod
-export APP_SECRET=… POSTGRES_PASSWORD=…
+export APP_SECRET=… POSTGRES_PASSWORD=… STORE_DOMAIN=shop.example.com ADMIN_DOMAIN=admin.example.com
 docker compose -f compose.yaml -f compose.prod.yaml up --detach --wait
 ```
 
-Bez wymaganych zmiennych Compose odmawia startu. Uruchomiony bez Compose obraz sprawdza `APP_SECRET` i `DATABASE_PASSWORD` w entrypoincie i kończy działanie z błędem.
+Bez wymaganych zmiennych Compose odmawia startu. Uruchomiony bez Compose obraz backendu sprawdza `APP_SECRET` i `DATABASE_PASSWORD` w entrypoincie i kończy działanie z błędem.
 
 Produkcja działa jako osobny projekt Compose `ecommerce-prod` (własne kontenery, sieć i wolumeny `ecommerce-prod_*`), niezależny od projektu dev `ecommerce`.
 Dev zajmuje `127.0.0.1:80/443`, więc gdy oba środowiska działają na jednym hoście, prod musi używać innych portów, np. `PROD_HTTP_PORT=8080 PROD_HTTPS_PORT=8443 PROD_HTTP3_PORT=8443`.
+
+### Niezależne wdrożenia
+
+Każda aplikacja i edge to osobny obraz. Wdrożenie jednej z nich nie restartuje pozostałych, bo edge rozwiązuje adresy usług przy każdym połączeniu:
+
+```bash
+make store-build-prod      # albo backend-, admin-, edge-build-prod
+docker compose -f compose.yaml -f compose.prod.yaml up --detach --no-deps --wait store
+```
+
+Topologia nie zakłada jednego hosta: edge kieruje ruch po nazwach usług (`backend`, `store`, `admin`). Przy rozdzieleniu aplikacji na osobne hosty zmienia się tylko adres upstream w `infra/edge/Caddyfile`.
 
 ### Migracje w produkcji
 
@@ -160,9 +192,9 @@ Zalecenia:
 `infra/docker/admin` buduje statyczne pliki (Vite) i serwuje je przez Caddy na Alpine:
 - użytkownik uid 1000, port 8080, bez capabilities, z systemem plików tylko do odczytu,
 - fallback SPA i długie cache dla hashowanych assetów,
-- bez TLS i bez proxy `/api`; te obsłuży centralny edge w etapie 4.
+- bez TLS i bez proxy `/api`; to zadanie edge.
 
-Do tego czasu admin nie jest częścią `compose.prod.yaml`. Obraz sprawdza `make admin-check-prod` na `127.0.0.1:8081`:
+Obraz sprawdza osobno `make admin-check-prod` na `127.0.0.1:8081`:
 - start z `--read-only` i `--cap-drop ALL`,
 - uid inny niż 0,
 - `index.html` i fallback SPA,
@@ -177,21 +209,25 @@ Do tego czasu admin nie jest częścią `compose.prod.yaml`. Obraz sprawdza `mak
 - bez capabilities, z read-only root filesystem i tmpfs na `.next/cache`,
 - z wyłączoną telemetrią.
 
-Do etapu 4 sklep nie jest częścią `compose.prod.yaml`. Obraz sprawdza `make store-check-prod` na `127.0.0.1:8082`:
+Obraz sprawdza osobno `make store-check-prod` na `127.0.0.1:8082`:
 - HTML renderowany na serwerze, renderowanie na żądanie (`no-store`),
 - 404 dla nieznanych ścieżek, cache assetów,
 - nagłówki bezpieczeństwa i brak `X-Powered-By`,
 - uid,
 - brak źródeł i przeglądarkowych source map, brak menedżerów pakietów.
 
-### Kontrola obrazów produkcyjnych
+### Kontrola produkcji
 
-`make check-prod` uruchamia `make admin-check-prod` i `make store-check-prod` (opisane wyżej). Obraz backendu buduje i uruchamia w tymczasowym projekcie `ecommerce-prod-check` na portach 8080/8443 (zmiana: `CHECK_PROD_HTTP_PORT`, `CHECK_PROD_HTTPS_PORT`), obok działającego dev.
-Dane są w tmpfs, więc kontrola nie zostawia wolumenów. Sekrety generuje na czas testu i nigdzie ich nie zapisuje. Sprawdza:
+`make check-prod` uruchamia kolejno:
+- `make admin-check-prod` i `make store-check-prod` (opisane wyżej),
+- `make stack-check-prod`, który uruchamia całą topologię (edge, backend, sklep, admin, PostgreSQL) w tymczasowym projekcie `ecommerce-prod-check`, z edge na portach 8080/8443 (zmiana: `CHECK_PROD_HTTP_PORT`, `CHECK_PROD_HTTPS_PORT`), obok działającego dev.
 
-- odmowę startu bez `APP_SECRET` i `POSTGRES_PASSWORD`,
-- `/health` przy haśle bazy ze znakami specjalnymi,
-- migracje,
-- użytkownika uid 1000 i kod tylko do odczytu,
-- 503 przy zatrzymanej bazie i powrót do 200,
-- brak hasła w logach.
+Kontrola stosu używa testowych domen `store.localhost` i `admin.localhost` z lokalnym CA Caddy. Dane trzyma w tmpfs, więc nie zostawia wolumenów, a sekrety generuje na czas testu i nigdzie ich nie zapisuje. Sprawdza:
+
+- **konfigurację:** odmowę startu bez `APP_SECRET`, `POSTGRES_PASSWORD`, `STORE_DOMAIN` i `ADMIN_DOMAIN`,
+- **routing:** sklep i admin po domenie, fallback SPA, `/api/*` → backend bez prefiksu na obu domenach, ścieżki spoza `/api` zostają przy frontendzie, przekierowanie HTTP → HTTPS (308) na publiczny port, brak obsługi nieznanych domen,
+- **edge:** nagłówki (HSTS, `nosniff`, brak `Server`, `Via` i `X-Powered-By`),
+- **ekspozycję:** porty publikuje tylko edge,
+- **uprawnienia:** uid inny niż 0 we wszystkich aplikacjach, zero efektywnych capabilities w edge, sklepie i adminie,
+- **backend za edge:** `/health` przy haśle bazy ze znakami specjalnymi, migracje, kod tylko do odczytu, 503 przy zatrzymanej bazie i powrót do 200, brak hasła w logach,
+- **niezależne wdrożenia:** odtworzenie samego sklepu, admina, backendu i edge zostawia pozostałe kontenery nietknięte, a wszystkie trasy dalej działają.

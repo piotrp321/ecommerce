@@ -1,0 +1,6 @@
+# Build context of the edge image is the repository root; only its configuration
+# reaches the image.
+*
+
+!infra/edge/
+infra/edge/Dockerfile*

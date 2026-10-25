@@ -30,6 +30,20 @@ services:
       database:
         condition: service_healthy
 
+  admin:
+    build:
+      # Repository root as context, restricted by infra/docker/admin/Dockerfile.dockerignore.
+      context: .
+      dockerfile: infra/docker/admin/Dockerfile
+    restart: unless-stopped
+
+  store:
+    build:
+      # Repository root as context, restricted by infra/docker/store/Dockerfile.dockerignore.
+      context: .
+      dockerfile: infra/docker/store/Dockerfile
+    restart: unless-stopped
+
   database:
     image: postgres:${POSTGRES_VERSION:-18}-alpine
     restart: unless-stopped
