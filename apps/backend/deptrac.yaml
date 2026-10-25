@@ -22,7 +22,12 @@ deptrac:
     - name: Catalog_Infrastructure
       collectors:
         - type: classNameRegex
-          value: '#^App\\Catalog\\Infrastructure\\#'
+          value: '#^App\\Catalog\\Infrastructure\\(?!Inventory\\)#'
+    # Adapters between Catalog and Inventory, the only Catalog code allowed to use Inventory.
+    - name: Catalog_InventoryAdapters
+      collectors:
+        - type: classNameRegex
+          value: '#^App\\Catalog\\Infrastructure\\Inventory\\#'
     - name: Cart_Domain
       collectors:
         - type: classNameRegex
@@ -98,6 +103,13 @@ deptrac:
       collectors:
         - type: classNameRegex
           value: '#^(Doctrine\\(DBAL|ORM|Persistence|Migrations)|Doctrine\\Bundle)\\#'
+    # Other framework components (validation, serialization, security, messaging,
+    # DI, console...): adapters only. The core may use small value libraries
+    # (symfony/uid, psr/clock), which are deliberately not listed here.
+    - name: Framework
+      collectors:
+        - type: classNameRegex
+          value: '#^(Symfony\\(Component\\(Validator|Serializer|Security|Messenger|HttpClient|Form|Console|DependencyInjection|EventDispatcher|Mailer|Cache|Lock)|Bundle|Bridge|Contracts)|Psr\\(Log|Container|EventDispatcher|Cache))\\#'
 
   # Allowed dependencies. Anything not listed is a violation, including any
   # dependency between modules: a cross-module dependency must be added here
@@ -112,15 +124,20 @@ deptrac:
     Catalog_Infrastructure:
       - Catalog_Domain
       - Catalog_Application
-      # Adapters between the modules (src/Catalog/Infrastructure/Inventory):
-      # Catalog's availability port uses Inventory's StockLevels, and Catalog
-      # implements Inventory's KnownProducts port. Inventory does not depend on Catalog.
-      - Inventory_Application
       - Shared_Domain
       - Shared_Application
       - Shared_Infrastructure
       - Http
       - Persistence
+      - Framework
+    # The one cross-module dependency (ADR-0005): Catalog's availability port is
+    # backed by Inventory's StockLevels, and Catalog implements Inventory's
+    # KnownProducts port. Inventory does not depend on Catalog.
+    Catalog_InventoryAdapters:
+      - Catalog_Domain
+      - Catalog_Application
+      - Inventory_Application
+      - Shared_Domain
     Cart_Domain:
       - Shared_Domain
     Cart_Application:
@@ -135,6 +152,7 @@ deptrac:
       - Shared_Infrastructure
       - Http
       - Persistence
+      - Framework
     Ordering_Domain:
       - Shared_Domain
     Ordering_Application:
@@ -149,6 +167,7 @@ deptrac:
       - Shared_Infrastructure
       - Http
       - Persistence
+      - Framework
     Inventory_Domain:
       - Shared_Domain
     Inventory_Application:
@@ -163,6 +182,7 @@ deptrac:
       - Shared_Infrastructure
       - Http
       - Persistence
+      - Framework
     Payments_Domain:
       - Shared_Domain
     Payments_Application:
@@ -177,6 +197,7 @@ deptrac:
       - Shared_Infrastructure
       - Http
       - Persistence
+      - Framework
     Shared_Domain: ~
     Shared_Application:
       - Shared_Domain
@@ -185,5 +206,7 @@ deptrac:
       - Shared_Application
       - Http
       - Persistence
+      - Framework
     Bootstrap:
       - Http
+      - Framework
