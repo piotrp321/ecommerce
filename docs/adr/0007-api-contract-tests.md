@@ -35,6 +35,6 @@ The typed client `packages/sdk` follows in a separate step, coordinated with the
 ## Consequences
 
 - **Every endpoint or JSON change needs a contract change in the same commit**, otherwise the tests fail. Requests sent directly through `$this->client` (outside `ApiTestCase::request()`) are not validated automatically; call `assertResponseMatchesContract()` there when it matters.
-- **The first run found a real mismatch.** Router-level 404/405 responses of JSON requests (e.g. a non-UUID id) were plain `application/json`. `ApiExceptionSubscriber` now renders them as problem details, based on the `Accept` header (HTML clients unchanged).
+- **The first run found a real mismatch.** Router-level 404/405 responses of JSON requests (e.g. a non-UUID id) were plain `application/json`. `ApiExceptionSubscriber` now renders them as problem details, based on the `Accept` header (HTML clients unchanged). Their `detail` is only the status text: Symfony's router message would reveal the internal scheme, host and path behind the edge.
 - **The contract gained `GET /health`** (Operations tag) and explicit `security: []` on public operations.
 - **Validation covers what the tests exercise.** Documented statuses that no test triggers (e.g. some `400`/`415` cases described in the contract's introduction) are not proven.
