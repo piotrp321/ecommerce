@@ -30,4 +30,4 @@ Lokalnie (macOS): `pnpm --filter admin lint|typecheck|test|build`, serwer dev: `
 
 ## Obraz produkcyjny
 
-`infra/docker/admin`: statyczny build serwowany przez Caddy (uid 1000, port 8080, bez capabilities, read-only). Obraz nie obsługuje TLS ani routingu `/api`; robi to edge (etap 4).
+`infra/docker/admin`: statyczny build serwowany przez Caddy (uid 1000, port 8080, bez capabilities, read-only). Obraz nie obsługuje TLS ani routingu `/api`; robi to edge (`infra/edge`).

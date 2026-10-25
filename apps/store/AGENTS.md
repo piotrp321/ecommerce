@@ -41,4 +41,4 @@ Lokalnie (macOS): `pnpm --filter store lint|typecheck|test|build`, serwer dev: `
 
 ## Obraz produkcyjny
 
-`infra/docker/store`: serwer standalone Next.js (uid 1000, port 3000, bez capabilities, read-only z tmpfs na `.next/cache`), bez menedżerów pakietów i źródeł. Serwerowe source mapy zostają (czytelne błędy), przeglądarkowe nie są publikowane. TLS i domeny obsłuży edge (etap 4).
+`infra/docker/store`: serwer standalone Next.js (uid 1000, port 3000, bez capabilities, read-only z tmpfs na `.next/cache`), bez menedżerów pakietów i źródeł. Serwerowe source mapy zostają (czytelne błędy), przeglądarkowe nie są publikowane. TLS, domeny i `/api` obsługuje edge (`infra/edge`).

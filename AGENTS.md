@@ -19,22 +19,23 @@ Edukacyjny system e-commerce rozwijany jako monorepo. Projekt służy do nauki A
 - `apps/store`: sklep, Next.js + React + TypeScript (SSR)
 - `packages/sdk`: planowany w etapie 5 (`docs/roadmap.md`); nie twórz go na zapas
 - `infra/docker/<app>/`: obraz Docker danej aplikacji (Dockerfile i jego `Dockerfile.dockerignore`)
-- `infra/scripts/`: skrypty narzędziowe (`check-prod-<app>.sh`)
+- `infra/edge/`: edge proxy (Caddy), jedyny publiczny punkt wejścia produkcji: TLS, routing po domenie i ścieżce (`/api/*` → backend bez prefiksu)
+- `infra/scripts/`: skrypty kontroli prod (`check-prod-admin.sh`, `check-prod-store.sh`, `check-prod-stack.sh` dla całej topologii)
 - `docs/`: specyfikacje, roadmapa, ADR
-- katalog główny: `compose.yaml` (wspólny, projekt dev `ecommerce`), `compose.override.yaml` (dev, porty tylko na localhost), `compose.prod.yaml` (osobny projekt `ecommerce-prod`, wymagane sekrety), `Makefile`, pnpm workspace (`package.json`, `pnpm-workspace.yaml`, jeden `pnpm-lock.yaml`), `.node-version`, `AGENTS.md`, `README.md`
+- katalog główny: `compose.yaml` (wspólny, projekt dev `ecommerce`), `compose.override.yaml` (dev, porty tylko na localhost), `compose.prod.yaml` (osobny projekt `ecommerce-prod`, edge + trzy aplikacje, wymagane sekrety i domeny), `Makefile`, pnpm workspace (`package.json`, `pnpm-workspace.yaml`, jeden `pnpm-lock.yaml`), `.node-version`, `AGENTS.md`, `README.md`
 
 Obrazy budujemy z kontekstu w katalogu głównym. Co trafia do obrazu, określa allowlista w `infra/docker/<app>/Dockerfile.dockerignore`.
 
 ## Komendy
 
 Wszystko uruchamiaj z katalogu głównego przez `make` (`make help` pokazuje listę).
-Konwencja: cele zbiorcze bez prefiksu, cele aplikacji z prefiksem nazwy aplikacji (`backend-*`, `admin-*`, `store-*`), cele workspace z prefiksem `pnpm-`.
+Konwencja: cele zbiorcze bez prefiksu, cele aplikacji z prefiksem nazwy aplikacji (`backend-*`, `admin-*`, `store-*`, `edge-*`), cała topologia prod z prefiksem `stack-`, cele workspace z prefiksem `pnpm-`.
 
 - `make bootstrap`: środowisko dev od zera (build, `pnpm-install`, up, Composer, migracje), dokładnie tak jak w README
 - `make up`, `make down`, `make logs`: kontenery dev (`down` nie usuwa wolumenów)
 - `make check`: **obowiązkowa bramka przed każdym commitem** (wszystkie aplikacje)
 - `make build-prod`: obrazy produkcyjne; sekrety podaje się dopiero przy uruchomieniu (`compose.prod.yaml`)
-- `make check-prod`: kontrola obrazów prod (backend w tymczasowym projekcie na portach 8080/8443, admin na 8081, store na 8082); uruchamiaj po zmianach w `infra/`, `compose*.yaml` lub `Makefile`
+- `make check-prod`: kontrola obrazów admina (8081) i sklepu (8082) oraz całej topologii prod z edge w tymczasowym projekcie (8080/8443: routing, ekspozycja, uprawnienia, backend, niezależne wdrożenia); uruchamiaj po zmianach w `infra/`, `compose*.yaml` lub `Makefile`
 - `make pnpm-install`, `make pnpm c="…"`: zależności JS i pnpm w kontenerze (`node_modules` w wolumenach Dockera)
 - CI (`.github/workflows/ci.yml`) uruchamia te same komendy: `make bootstrap`, `make check`, `make check-prod`. Nowe kontrole dodawaj do `Makefile`, nie bezpośrednio do workflow.
 
@@ -55,6 +56,13 @@ Nie kopiuj ani nie montuj `node_modules` między hostem a kontenerem. Każdy pak
 - Nie rozszerzaj zakresu ponad bieżący etap. Pomysły zapisuj jako propozycje dla użytkownika.
 - KISS i YAGNI: nie dodawaj narzędzi, pakietów ani katalogów na zapas (np. Turborepo, puste pakiety).
 - Gdy wymaganie jest niejasne, zapytaj zamiast zgadywać.
+
+## Produkcja
+
+- Publiczne porty ma wyłącznie `edge`. Nie publikuj portów backendu, sklepu, admina ani bazy w `compose.prod.yaml`.
+- Każda aplikacja i edge to osobny obraz, wdrażany niezależnie (`up -d --no-deps <usługa>`). Zmiana routingu = zmiana `infra/edge/Caddyfile` i nowy obraz edge.
+- Kontrakt routingu API: frontendy wołają `/api/...` na własnej domenie, edge przekazuje to do backendu bez prefiksu. Nowe endpointy backendu nie wymagają zmian w edge.
+- Pracując równolegle z innym agentem lub worktree, uruchamiaj Docker w izolowanym projekcie (`COMPOSE_PROJECT_NAME`, `IMAGES_PREFIX`, inne porty), żeby nie przejąć cudzych kontenerów.
 
 ## Bezpieczeństwo operacji
 
