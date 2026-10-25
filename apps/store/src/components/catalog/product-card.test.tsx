@@ -27,4 +27,12 @@ describe('ProductCard', () => {
     expect(screen.queryByRole('img')).not.toBeInTheDocument();
     expect(screen.getByText('Brak zdjęcia')).toBeInTheDocument();
   });
+
+  it('loads the photo lazily unless the card is in the first row', () => {
+    const { rerender } = render(<ProductCard product={product()} />);
+    expect(screen.getByRole('img')).toHaveAttribute('loading', 'lazy');
+
+    rerender(<ProductCard product={product()} eager />);
+    expect(screen.getByRole('img')).toHaveAttribute('loading', 'eager');
+  });
 });

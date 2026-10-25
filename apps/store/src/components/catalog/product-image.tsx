@@ -8,11 +8,12 @@ interface ProductImageProps {
   sizes: string;
   className?: string;
   imageClassName?: string;
-  priority?: boolean;
+  /** `eager` for images in the first viewport, `preload` for the page's main (LCP) image. */
+  loading?: 'lazy' | 'eager' | 'preload';
 }
 
 /** Fills its (relatively positioned) container; a neutral placeholder when there is no photo. */
-export function ProductImage({ image, sizes, className, imageClassName, priority = false }: ProductImageProps) {
+export function ProductImage({ image, sizes, className, imageClassName, loading = 'lazy' }: ProductImageProps) {
   return (
     <div className={cn('relative overflow-hidden bg-muted', className)}>
       {image ? (
@@ -21,7 +22,7 @@ export function ProductImage({ image, sizes, className, imageClassName, priority
           alt={image.alt}
           fill
           sizes={sizes}
-          priority={priority}
+          {...(loading === 'preload' ? { preload: true } : { loading })}
           className={cn('object-cover', imageClassName)}
         />
       ) : (

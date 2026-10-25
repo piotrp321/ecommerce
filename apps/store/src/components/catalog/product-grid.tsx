@@ -9,15 +9,15 @@ interface ProductGridProps {
   products: Product[];
   className?: string;
   /** Number of leading cards whose images load eagerly. */
-  priorityCount?: number;
+  eagerCount?: number;
 }
 
-export function ProductGrid({ products, className, priorityCount = 0 }: ProductGridProps) {
+export function ProductGrid({ products, className, eagerCount = 0 }: ProductGridProps) {
   return (
     <ul className={cn(gridClass, className)}>
       {products.map((product, index) => (
         <li key={product.id} className="flex">
-          <ProductCard product={product} priority={index < priorityCount} />
+          <ProductCard product={product} eager={index < eagerCount} />
         </li>
       ))}
     </ul>

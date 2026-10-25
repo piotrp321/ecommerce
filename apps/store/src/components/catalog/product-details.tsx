@@ -14,7 +14,7 @@ export function ProductDetails({ product }: { product: Product }) {
         <ProductImage
           image={product.image}
           sizes="(min-width: 768px) 50vw, 100vw"
-          priority
+          loading="preload"
           className="aspect-square rounded-3xl"
         />
         {product.image ? (

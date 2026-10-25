@@ -8,19 +8,19 @@ import { ProductImage } from './product-image';
 interface ProductCardProps {
   product: Product;
   /** Load the image eagerly (first row above the fold). */
-  priority?: boolean;
+  eager?: boolean;
 }
 
 export const productHref = (slug: string): string => `/produkt/${slug}`;
 
-export function ProductCard({ product, priority = false }: ProductCardProps) {
+export function ProductCard({ product, eager = false }: ProductCardProps) {
   return (
     <article className="group relative flex w-full flex-col gap-4">
       <div className="relative">
         <ProductImage
           image={product.image}
           sizes="(min-width: 1280px) 22vw, (min-width: 768px) 30vw, 50vw"
-          priority={priority}
+          loading={eager ? 'eager' : 'lazy'}
           className="aspect-[4/5] rounded-2xl"
           imageClassName={
             'transition-transform duration-500 ease-out group-hover:scale-[1.04] motion-reduce:transition-none' +

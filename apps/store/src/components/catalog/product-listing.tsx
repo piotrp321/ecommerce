@@ -135,7 +135,7 @@ export function ListingResults({ pathname, params, result }: ListingResultsProps
         {productCountLabel(result.totalItems)}
         {result.totalPages > 1 ? ` · strona ${String(result.page)} z ${String(result.totalPages)}` : null}
       </p>
-      <ProductGrid products={result.items} priorityCount={3} />
+      <ProductGrid products={result.items} eagerCount={3} />
       <div className="mt-14">
         <CatalogPagination pathname={pathname} sort={params.sort} page={result.page} totalPages={result.totalPages} />
       </div>

@@ -13,7 +13,7 @@ export function Hero({ image }: { image: CatalogImage }) {
           src={image.url}
           alt={image.alt}
           fill
-          priority
+          preload
           sizes="(min-width: 1280px) 1216px, 100vw"
           className="-z-10 object-cover"
         />
