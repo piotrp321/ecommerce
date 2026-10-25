@@ -54,8 +54,10 @@ export function isPastLastPage(page: number, totalPages: number): boolean {
   return page > Math.max(totalPages, 1);
 }
 
-/** Metadata of a listing page past the last one: not indexed and without a canonical URL. */
-export const pastLastPageMetadata = {
-  title: 'Nie ma takiej strony',
-  robots: { index: false, follow: true },
-} as const;
+/**
+ * Metadata of a listing page past the last one: not indexed and without a canonical URL.
+ * It replaces the robots of the layout, so demo data keeps its nofollow.
+ */
+export function pastLastPageMetadata(isDemo: boolean) {
+  return { title: 'Nie ma takiej strony', robots: { index: false, follow: !isDemo } };
+}

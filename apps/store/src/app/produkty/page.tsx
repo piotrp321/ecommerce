@@ -16,7 +16,7 @@ import { ListingLayout, ListingResults } from '@/components/catalog/product-list
 export async function generateMetadata({ searchParams }: PageProps<'/produkty'>): Promise<Metadata> {
   const params = parseListingParams(await searchParams);
   const result = await catalog.listProducts(toProductQuery(params));
-  if (isPastLastPage(params.page, result.totalPages)) return pastLastPageMetadata;
+  if (isPastLastPage(params.page, result.totalPages)) return pastLastPageMetadata(catalog.isDemo);
 
   return {
     title: params.page > 1 ? `Wszystkie produkty, strona ${String(params.page)}` : 'Wszystkie produkty',

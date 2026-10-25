@@ -23,7 +23,7 @@ export async function generateMetadata({ params, searchParams }: PageProps<'/kat
   if (!category) return {};
   const listing = parseListingParams(await searchParams);
   const result = await catalog.listProducts(toProductQuery(listing, category.slug));
-  if (isPastLastPage(listing.page, result.totalPages)) return pastLastPageMetadata;
+  if (isPastLastPage(listing.page, result.totalPages)) return pastLastPageMetadata(catalog.isDemo);
   const path = [...category.ancestors.map((ancestor) => ancestor.name), category.name].join(' › ');
 
   return {

@@ -1,4 +1,4 @@
-import { isPastLastPage, listingHref, parseListingParams, toProductQuery } from './query';
+import { isPastLastPage, listingHref, parseListingParams, pastLastPageMetadata, toProductQuery } from './query';
 
 describe('listing query parameters', () => {
   it('maps the store parameters to the API query', () => {
@@ -35,5 +35,12 @@ describe('isPastLastPage', () => {
     [4, 3, true],
   ])('page %i of %i pages → %s', (page, totalPages, expected) => {
     expect(isPastLastPage(page, totalPages)).toBe(expected);
+  });
+});
+
+describe('pastLastPageMetadata', () => {
+  it('is never indexed and follows links only for a real catalog', () => {
+    expect(pastLastPageMetadata(false).robots).toEqual({ index: false, follow: true });
+    expect(pastLastPageMetadata(true).robots).toEqual({ index: false, follow: false });
   });
 });

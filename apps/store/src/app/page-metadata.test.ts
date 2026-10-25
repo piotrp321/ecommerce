@@ -30,12 +30,12 @@ describe('metadata of the catalog pages', () => {
     });
   });
 
-  it('pages past the last one are not indexed and have no canonical URL', async () => {
+  it('pages past the last one are not indexed (nofollow with demo data) and have no canonical URL', async () => {
     const all = await productsMetadata(listing({ strona: '99' }));
     const audio = await categoryMetadata(category('audio', { strona: '2' }));
 
     for (const metadata of [all, audio]) {
-      expect(metadata.robots).toEqual({ index: false, follow: true });
+      expect(metadata.robots).toEqual({ index: false, follow: false });
       expect(metadata).not.toHaveProperty('alternates');
     }
   });
