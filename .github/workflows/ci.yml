@@ -58,8 +58,10 @@ jobs:
         with:
           persist-credentials: false
 
-      # Builds the prod images without secrets and checks them: the backend in an
-      # ephemeral project with one-time generated secrets (never real production
-      # values); the admin and store images read-only with all capabilities dropped.
-      - name: Build and check the production images
+      # Builds the prod images without secrets and checks them: the admin and store
+      # images on their own (read-only, all capabilities dropped), then the whole
+      # topology (edge, backend, store, admin, PostgreSQL) in an ephemeral project
+      # with one-time generated secrets (never real production values): routing,
+      # exposure, privileges, backend behaviour and independent redeployment.
+      - name: Build and check the production images and topology
         run: make check-prod
