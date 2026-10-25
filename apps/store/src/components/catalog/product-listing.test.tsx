@@ -1,7 +1,10 @@
 import { render, screen } from '@testing-library/react';
 import type { ProductPage } from '@/catalog/types';
 import { product } from '@/test/fixtures';
-import { ListingResults, productCountLabel } from './product-listing';
+import { categories } from '@/test/fixtures';
+import { ListingLayout, ListingResults, productCountLabel } from './product-listing';
+
+vi.mock('next/navigation', () => ({ usePathname: () => '/kategoria/audio' }));
 
 const page = (overrides: Partial<ProductPage>): ProductPage => ({
   items: [],
@@ -46,6 +49,34 @@ describe('ListingResults', () => {
 
     expect(screen.getByRole('heading', { name: 'Nie ma takiej strony' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Wróć do pierwszej strony' })).toHaveAttribute('href', '/kategoria/audio');
+  });
+});
+
+describe('ListingLayout', () => {
+  it('keeps the heading hierarchy: page h1, products h2, product cards h3', () => {
+    render(
+      <ListingLayout
+        title="Audio"
+        pathname="/kategoria/audio"
+        trail={[]}
+        categories={categories}
+        activeSlug="audio"
+        subcategories={[]}
+        sort="nazwa"
+      >
+        <ListingResults
+          pathname="/kategoria/audio"
+          params={{ sort: 'nazwa', page: 1 }}
+          result={page({ items: [product()], totalItems: 1, totalPages: 1 })}
+        />
+      </ListingLayout>,
+    );
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Audio' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Produkty' })).toContainElement(
+      screen.getByRole('heading', { level: 3, name: 'Słuchawki testowe' }),
+    );
+    expect(screen.getByRole('heading', { level: 2, name: 'Produkty' })).toBeInTheDocument();
   });
 });
 

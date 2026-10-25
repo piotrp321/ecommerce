@@ -71,7 +71,10 @@ export function ListingLayout({
           </div>
         </aside>
 
-        <section aria-label="Produkty" className="min-w-0">
+        <section aria-labelledby="products-title" className="min-w-0">
+          <h2 id="products-title" className="sr-only">
+            Produkty
+          </h2>
           <div className="mb-6 flex flex-wrap items-center gap-3">
             <CategorySheet
               categories={categories}

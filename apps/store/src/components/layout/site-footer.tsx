@@ -18,10 +18,8 @@ export function SiteFooter({ categories }: SiteFooterProps) {
             Edukacyjny projekt e-commerce. Katalog jest demonstracyjny: produkty, ceny i dostępność są przykładowe.
           </p>
         </div>
-        <nav aria-labelledby="footer-categories">
-          <h2 id="footer-categories" className="text-sm font-semibold">
-            Kategorie
-          </h2>
+        <nav aria-label="Kategorie w stopce">
+          <h2 className="text-sm font-semibold">Kategorie</h2>
           <ul className="mt-3 flex flex-col gap-2 text-sm text-muted-foreground">
             {categories.map((category) => (
               <li key={category.id}>
