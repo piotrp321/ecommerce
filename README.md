@@ -22,6 +22,7 @@ Edukacyjny system e-commerce rozwijany jako monorepo. Projekt służy do nauki A
 | `infra/edge` | Edge proxy (Caddy): jedyny publiczny punkt wejścia produkcji, TLS i routing |
 | `infra/scripts` | `check-prod-stack.sh` (cała topologia, z tymczasowym plikiem Compose), `check-prod-admin.sh`, `check-prod-store.sh` |
 | `docs` | Specyfikacje, roadmapa, ADR |
+| `.claude` | Wspólna konfiguracja Claude Code: skill `/feature-delivery`, subagenci, reguły `ask` (sekcja „Agentic SDLC”) |
 | katalog główny | `compose*.yaml`, `Makefile`, pnpm workspace (`package.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml`), `.node-version`, `AGENTS.md` |
 
 SDK (`packages/sdk`) powstanie w etapie 5 ([roadmapa](docs/roadmap.md)).
@@ -111,6 +112,42 @@ GitHub Actions (`.github/workflows/ci.yml`) uruchamia się dla każdego Pull Req
 - **Production images:** `make check-prod` (obrazy admina i sklepu osobno, potem cała topologia z edge, z jednorazowymi, generowanymi sekretami).
 
 Workflow nie korzysta z żadnych sekretów repozytorium.
+
+## Agentic SDLC (Claude Code)
+
+Funkcjonalności można dostarczać procesem z rozdzielonymi rolami ([ADR-0008](docs/adr/0008-agentic-sdlc-claude-code.md)):
+
+```
+/feature-delivery <opis zadania>
+```
+
+| Rola | Plik | Zakres |
+|---|---|---|
+| Orchestrator | `.claude/skills/feature-delivery/SKILL.md` | analiza, plan i kryteria akceptacji, bramki zgody, delegowanie, triage uwag, końcowy `make check`, PR, raport |
+| Developer | `.claude/agents/developer.md` | implementacja i testy we własnym worktree, `make check` przed commitem, poprawki |
+| Code Reviewer | `.claude/agents/code-reviewer.md` | review commita (SHA) względem bazy, tylko odczyt, `APPROVE` / `REQUEST CHANGES` |
+| QA Tester | `.claude/agents/qa-tester.md` | testy działającej aplikacji na tym samym SHA, błędy z krokami odtworzenia, retest |
+
+Przebieg: plan → akceptacja użytkownika → Developer → równolegle Code Review i QA na tym samym SHA → poprawki (najwyżej 3 rundy, potem eskalacja) → `make check` → zgoda użytkownika na push i draft PR → CI → raport. Blokują tylko uwagi P0/P1 i niespełnione kryteria akceptacji. Merge wyłącznie na polecenie użytkownika.
+
+Zabezpieczenia:
+
+- Każdy agent uruchamia Dockera we własnym projekcie Compose (`fd-<slug>-dev`, `fd-<slug>-qa`), zapisanym w `.env` w katalogu głównym swojego worktree (plik ignorowany przez git), i przed pierwszym poleceniem sprawdza izolację. Projekt `ecommerce` i projekty innych sesji nie są dotykane.
+- `make check-prod` nie jest uruchamiany automatycznie (stała nazwa projektu `ecommerce-prod-check`). Kontrole prod wykonuje CI.
+- `.claude/settings.json` wymusza pytanie o zgodę przy push, merge, usuwaniu gałęzi i worktree, destrukcyjnych operacjach git i usuwaniu wolumenów Dockera. To dodatkowa warstwa: skill ma własne bramki zgody.
+- Proces niczego nie usuwa. Raport końcowy zawiera komendy sprzątania (worktree, gałęzie, projekty Compose).
+
+W repozytorium są tylko `.claude/settings.json`, `.claude/skills/` i `.claude/agents/`. Pozostałe pliki `.claude/` (np. `settings.local.json`, `worktrees/`) są lokalne. Sesje w aplikacji desktop czytają skills i agentów z głównego checkoutu, a definicje agentów ładują się przy starcie sesji.
+
+### Smoke test
+
+Sprawdzenie bez implementowania funkcjonalności, w sesji Claude Code w katalogu repozytorium:
+
+1. **Konfiguracja:** `/agents` wymienia `developer`, `code-reviewer` i `qa-tester` jako agentów projektu, a `/feature-delivery` jest w menu z podpowiedzią `<opis zadania>`.
+2. **Izolacja Developera:** „Użyj subagenta developer. Podaj tylko wynik `pwd`, `git branch --show-current`, `git rev-parse --git-dir` i `git rev-parse --git-common-dir`. Niczego nie zmieniaj.” Oczekiwane: katalog w `.claude/worktrees/`, różne `git-dir` i `git-common-dir`, worktree usunięty po zakończeniu (brak zmian).
+3. **Code Reviewer:** „Użyj subagenta code-reviewer. BASE=`<sha>^`, REVIEW_SHA=`<sha>`, zadanie: <opis zmergowanego PR>.” Oczekiwane: raport z `VERDICT` i uwagami w ustalonym formacie, `git status` bez zmian.
+4. **QA:** subagent qa-tester z kryterium istniejącej funkcji, np. „GET /catalog/products/{nieistniejący slug} zwraca 404 w formacie problem+json”, REVIEW_SHA = `origin/main` i profilem `fd-smoke-qa` (porty 28xxx). Oczekiwane: `VERDICT`, własny projekt w `docker compose ls`, kontenery `ecommerce` bez zmian (`docker ps` przed i po). Na commicie bez wpisu `/.env` w `.gitignore` QA celowo zwraca `BLOCKED` i nie uruchamia Dockera.
+5. **Cały przebieg:** `/feature-delivery` z małym zadaniem dotyczącym tylko testów. Przejdź przez plan, implementację, review i QA, a przy bramce push odmów. Komendy sprzątania z raportu wykonujesz ręcznie.
 
 ## Środowiska: prod i dev
 
