@@ -1,10 +1,12 @@
 /**
- * PROVISIONAL view types of the admin panel.
+ * PROVISIONAL view models of the admin panel: what the screens display and
+ * send, not copies of backend DTOs.
  *
- * They follow the draft contract `docs/api/openapi.yaml` from the
- * `feature/catalog-backend` branch (still in review) only as far as the screens
- * need it. They are NOT the API contract: replace them with the types generated
- * from OpenAPI (`packages/sdk`, stage 5) instead of extending them by hand.
+ * Their shape was taken from the draft contract (`docs/api/openapi.yaml` on
+ * `feature/catalog-backend`, still in review) only as far as the screens need
+ * it. They are NOT the API contract. When the SDK generated from OpenAPI
+ * exists (`packages/sdk`, stage 5), use its types instead and map them in the
+ * real `AdminApi` adapter. Do not extend these by hand to follow the backend.
  */
 
 export type Uuid = string;
