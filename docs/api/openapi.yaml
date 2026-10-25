@@ -48,7 +48,7 @@ paths:
       parameters:
         - name: category
           in: query
-          description: Category slug; only products assigned to it (an unknown slug gives an empty list).
+          description: Category slug; products of this category and of all its subcategories (an unknown slug gives an empty list).
           schema: { $ref: '#/components/schemas/Slug' }
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PerPage'
@@ -97,10 +97,10 @@ paths:
     get:
       tags: [Catalog (public)]
       operationId: listCategories
-      summary: List all categories, ordered by name
+      summary: The whole category tree
       responses:
         '200':
-          description: All categories (flat list)
+          description: Root categories with nested subcategories; siblings ordered by name
           content:
             application/json:
               schema:
@@ -109,13 +109,13 @@ paths:
                 properties:
                   items:
                     type: array
-                    items: { $ref: '#/components/schemas/PublicCategory' }
+                    items: { $ref: '#/components/schemas/PublicCategoryNode' }
 
   /catalog/categories/{slug}:
     get:
       tags: [Catalog (public)]
       operationId: getCategory
-      summary: Get a category by slug
+      summary: A category with its subtree and breadcrumbs
       parameters:
         - name: slug
           in: path
@@ -123,10 +123,10 @@ paths:
           schema: { $ref: '#/components/schemas/Slug' }
       responses:
         '200':
-          description: The category
+          description: The category, its ancestors (from the root) and its subcategories (nested)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/PublicCategory' }
+              schema: { $ref: '#/components/schemas/PublicCategoryDetails' }
         '404': { $ref: '#/components/responses/NotFound' }
 
   # ——— Admin: products ———————————————————————————————————————————————————
@@ -142,7 +142,7 @@ paths:
           schema: { type: string, enum: [all, active, inactive], default: all }
         - name: category
           in: query
-          description: Category id.
+          description: Category id; products of this category and of all its subcategories.
           schema: { $ref: '#/components/schemas/Uuid' }
         - name: q
           in: query
@@ -273,11 +273,11 @@ paths:
     get:
       tags: [Catalog (admin)]
       operationId: adminListCategories
-      summary: List all categories with product counts
+      summary: The whole category tree with product counts
       security: [{ adminToken: [] }]
       responses:
         '200':
-          description: All categories, ordered by name
+          description: Root categories with nested subcategories; siblings ordered by name
           content:
             application/json:
               schema:
@@ -286,19 +286,19 @@ paths:
                 properties:
                   items:
                     type: array
-                    items: { $ref: '#/components/schemas/AdminCategory' }
+                    items: { $ref: '#/components/schemas/AdminCategoryNode' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
     post:
       tags: [Catalog (admin)]
       operationId: adminCreateCategory
-      summary: Create a category
+      summary: Create a root category or a subcategory
       security: [{ adminToken: [] }]
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/CategoryRequest' }
+            schema: { $ref: '#/components/schemas/CreateCategoryRequest' }
       responses:
         '201':
           description: Created
@@ -309,7 +309,7 @@ paths:
               example: categories/0192f0c4-7c2a-7c51-9b1e-2f3c4d5e6f70
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AdminCategory' }
+              schema: { $ref: '#/components/schemas/AdminCategoryDetails' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
@@ -321,33 +321,33 @@ paths:
     get:
       tags: [Catalog (admin)]
       operationId: adminGetCategory
-      summary: Get a category
+      summary: A category with its subtree and ancestors
       security: [{ adminToken: [] }]
       responses:
         '200':
           description: The category
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AdminCategory' }
+              schema: { $ref: '#/components/schemas/AdminCategoryDetails' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
     put:
       tags: [Catalog (admin)]
       operationId: adminUpdateCategory
-      summary: Rename a category or change its slug
+      summary: Rename a category or change its slug (the parent changes only through move)
       security: [{ adminToken: [] }]
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/CategoryRequest' }
+            schema: { $ref: '#/components/schemas/UpdateCategoryRequest' }
       responses:
         '200':
           description: Updated
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AdminCategory' }
+              schema: { $ref: '#/components/schemas/AdminCategoryDetails' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -356,7 +356,8 @@ paths:
     delete:
       tags: [Catalog (admin)]
       operationId: adminDeleteCategory
-      summary: Delete a category that has no products
+      summary: Delete a category without products and subcategories
+      description: Products and subcategories are never deleted or moved implicitly; a non-empty category gives 409.
       security: [{ adminToken: [] }]
       responses:
         '204': { description: Deleted }
@@ -364,6 +365,43 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+
+  /admin/catalog/categories/{id}/move:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      tags: [Catalog (admin)]
+      operationId: adminMoveCategory
+      summary: Move a category with its subtree to another parent or to the root level
+      description: |
+        Products stay in their categories. Rejected with 409 when the new parent is the
+        category itself or one of its descendants (cycle), or when the tree would get
+        deeper than 10 levels; 422 when the parent does not exist.
+      security: [{ adminToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [parentId]
+              properties:
+                parentId:
+                  description: The new parent, or null to make the category a root.
+                  oneOf:
+                    - $ref: '#/components/schemas/Uuid'
+                    - type: 'null'
+      responses:
+        '200':
+          description: The category in its new place
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminCategoryDetails' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
 
   # ——— Admin: stock (Inventory module) ———————————————————————————————————
   /admin/inventory/stock/{productId}:
@@ -458,7 +496,7 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
     Conflict:
-      description: Business rule conflict (duplicate SKU or slug, category still has products, concurrent first stock update, to be retried)
+      description: Business rule conflict (duplicate SKU or slug; category still has products or subcategories; category move that would create a cycle or exceed 10 levels; concurrent first stock update, to be retried)
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -590,23 +628,70 @@ components:
             - $ref: '#/components/schemas/Uuid'
             - type: 'null'
 
-    PublicCategory:
+    PublicCategoryNode:
       type: object
-      required: [id, slug, name]
+      description: A category with its subcategories (recursively), siblings ordered by name.
+      required: [id, slug, name, children]
       properties:
         id: { $ref: '#/components/schemas/Uuid' }
         slug: { $ref: '#/components/schemas/Slug' }
         name: { type: string }
-    AdminCategory:
+        children:
+          type: array
+          items: { $ref: '#/components/schemas/PublicCategoryNode' }
+    PublicCategoryDetails:
       type: object
-      required: [id, slug, name, productCount]
+      required: [id, slug, name, ancestors, children]
       properties:
         id: { $ref: '#/components/schemas/Uuid' }
         slug: { $ref: '#/components/schemas/Slug' }
         name: { type: string }
-        productCount: { type: integer, minimum: 0 }
-    CategoryRequest:
+        ancestors:
+          description: Path from the root category down to the parent (breadcrumbs); empty for a root.
+          type: array
+          items: { $ref: '#/components/schemas/CategoryRef' }
+        children:
+          type: array
+          items: { $ref: '#/components/schemas/PublicCategoryNode' }
+    AdminCategoryNode:
       type: object
+      required: [id, slug, name, parentId, productCount, children]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        slug: { $ref: '#/components/schemas/Slug' }
+        name: { type: string }
+        parentId:
+          oneOf:
+            - $ref: '#/components/schemas/Uuid'
+            - type: 'null'
+        productCount: { type: integer, minimum: 0, description: Products directly in this category (active or not). }
+        children:
+          type: array
+          items: { $ref: '#/components/schemas/AdminCategoryNode' }
+    AdminCategoryDetails:
+      allOf:
+        - $ref: '#/components/schemas/AdminCategoryNode'
+        - type: object
+          required: [ancestors]
+          properties:
+            ancestors:
+              description: Path from the root category down to the parent; empty for a root.
+              type: array
+              items: { $ref: '#/components/schemas/CategoryRef' }
+    CreateCategoryRequest:
+      type: object
+      required: [slug, name]
+      properties:
+        slug: { $ref: '#/components/schemas/Slug' }
+        name: { type: string, minLength: 1, maxLength: 100 }
+        parentId:
+          description: Parent category; null or absent for a root category.
+          oneOf:
+            - $ref: '#/components/schemas/Uuid'
+            - type: 'null'
+    UpdateCategoryRequest:
+      type: object
+      description: '`parentId` must not be sent; use the move operation.'
       required: [slug, name]
       properties:
         slug: { $ref: '#/components/schemas/Slug' }
