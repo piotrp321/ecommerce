@@ -62,7 +62,12 @@ export function matchPath(pattern: string, pathname: string): Record<string, str
   for (const [index, segment] of expected.entries()) {
     const value = actual[index] ?? '';
     if (segment.startsWith(':')) {
-      params[segment.slice(1)] = decodeURIComponent(value);
+      try {
+        params[segment.slice(1)] = decodeURIComponent(value);
+      } catch {
+        // A malformed escape (e.g. "%ZZ") does not match any route.
+        return null;
+      }
     } else if (segment !== value) {
       return null;
     }

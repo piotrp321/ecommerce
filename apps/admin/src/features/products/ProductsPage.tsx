@@ -79,6 +79,24 @@ export function ProductsPage() {
     content = <ErrorState error={products.error} onRetry={products.reload} />;
   } else if (result === undefined) {
     content = <LoadingState label="Wczytywanie produktów…" rows={8} />;
+  } else if (result.items.length === 0 && result.totalItems > 0) {
+    content = (
+      <EmptyState
+        icon="search"
+        title="Ta strona nie istnieje"
+        action={
+          <Button
+            onClick={() => {
+              setQuery({ page: 1 });
+            }}
+          >
+            Przejdź do pierwszej strony
+          </Button>
+        }
+      >
+        Lista ma {result.totalPages} {result.totalPages === 1 ? 'stronę' : 'stron(y)'}.
+      </EmptyState>
+    );
   } else if (result.items.length === 0) {
     content = filtered ? (
       <EmptyState
@@ -128,7 +146,9 @@ export function ProductsPage() {
                     setQuery({ sort: next });
                   }}
                 />
-                <th scope="col">SKU</th>
+                <th scope="col" className="col-wide">
+                  SKU
+                </th>
                 <th scope="col" className="col-optional">
                   Kategoria
                 </th>
@@ -162,8 +182,11 @@ export function ProductsPage() {
                       {product.name}
                     </Link>
                     <span className="cell-sub">/{product.slug}</span>
+                    <span className="cell-sub only-narrow">
+                      <code className="sku">{product.sku}</code>
+                    </span>
                   </td>
-                  <td>
+                  <td className="col-wide">
                     <code className="sku">{product.sku}</code>
                   </td>
                   <td className="col-optional">

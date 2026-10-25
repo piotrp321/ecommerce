@@ -15,8 +15,11 @@ describe('CategoriesPage', () => {
 
   it('adds a subcategory', async () => {
     renderApp('/categories');
-    fireEvent.click(await screen.findByRole('button', { name: 'Dodaj podkategorię do Sport' }));
+    const opener = await screen.findByRole('button', { name: 'Dodaj podkategorię do Sport' });
+    opener.focus(); // a real click focuses the button; fireEvent does not
+    fireEvent.click(opener);
     const dialog = screen.getByRole('dialog', { name: 'Nowa podkategoria' });
+    expect(within(dialog).getByRole('textbox', { name: /Nazwa/ })).toHaveFocus();
 
     fireEvent.change(within(dialog).getByRole('textbox', { name: /Nazwa/ }), { target: { value: 'Turystyka' } });
     expect(within(dialog).getByRole('textbox', { name: /Slug/ })).toHaveValue('turystyka');
@@ -24,6 +27,7 @@ describe('CategoriesPage', () => {
 
     expect(await screen.findByText('Turystyka')).toBeInTheDocument();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(opener).toHaveFocus();
   });
 
   it('shows the backend error for a move that would create a cycle', async () => {

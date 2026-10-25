@@ -37,6 +37,12 @@ describe('App', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Nie znaleziono strony' })).toBeInTheDocument();
   });
 
+  it('shows the not-found page for a malformed address', () => {
+    renderApp('/products/%ZZ');
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Nie znaleziono strony' })).toBeInTheDocument();
+  });
+
   it('shows an error state with retry when the API fails', async () => {
     const demo = createDemoApi({ latencyMs: 0 });
     let fail = true;

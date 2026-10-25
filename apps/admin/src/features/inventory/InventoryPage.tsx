@@ -74,6 +74,22 @@ export function InventoryPage() {
     content = <ErrorState error={error} onRetry={reload} />;
   } else if (data === undefined) {
     content = <LoadingState label="Wczytywanie stanów magazynowych…" rows={8} />;
+  } else if (data.items.length === 0 && data.totalItems > 0) {
+    content = (
+      <EmptyState
+        icon="search"
+        title="Ta strona nie istnieje"
+        action={
+          <Button
+            onClick={() => {
+              setQuery({ page: 1 });
+            }}
+          >
+            Przejdź do pierwszej strony
+          </Button>
+        }
+      />
+    );
   } else if (data.items.length === 0) {
     content = (
       <EmptyState icon="search" title="Brak produktów">

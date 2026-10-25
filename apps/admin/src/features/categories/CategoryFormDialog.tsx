@@ -93,7 +93,7 @@ export function CategoryFormDialog({ open, title, description, initialValues, su
               value={values.name}
               maxLength={100}
               autoComplete="off"
-              autoFocus
+              data-autofocus
               onChange={(event) => {
                 const name = event.target.value;
                 setValues((current) => ({ name, slug: slugEdited ? current.slug : slugify(name) }));

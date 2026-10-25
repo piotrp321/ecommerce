@@ -122,20 +122,24 @@ export function DashboardPage() {
                 Wszystkie <Icon name="chevronRight" size={14} />
               </Link>
             </header>
-            <ul className="list">
-              {recent.map((product) => (
-                <li key={product.id} className="list__item">
-                  <div className="list__main">
-                    <Link to={`/products/${product.id}`} className="cell-title">
-                      {product.name}
-                    </Link>
-                    <span className="cell-sub">{formatDate(product.createdAt)}</span>
-                  </div>
-                  <span className="num">{formatAmount(product.price.net.amount)}</span>
-                  <StatusBadge active={product.active} />
-                </li>
-              ))}
-            </ul>
+            {recent.length === 0 ? (
+              <EmptyState title="Brak produktów" />
+            ) : (
+              <ul className="list">
+                {recent.map((product) => (
+                  <li key={product.id} className="list__item">
+                    <div className="list__main">
+                      <Link to={`/products/${product.id}`} className="cell-title">
+                        {product.name}
+                      </Link>
+                      <span className="cell-sub">{formatDate(product.createdAt)}</span>
+                    </div>
+                    <span className="num">{formatAmount(product.price.net.amount)}</span>
+                    <StatusBadge active={product.active} />
+                  </li>
+                ))}
+              </ul>
+            )}
           </section>
 
           <section className="card card--padded dashboard-grid__wide" aria-labelledby="orders-soon">

@@ -1,4 +1,10 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react';
+
+function restoreFocus(element: HTMLElement | null) {
+  // The opener may be gone (e.g. a deleted row): fall back to the page heading.
+  const target = element?.isConnected === true ? element : document.querySelector<HTMLElement>('[data-page-heading]');
+  target?.focus();
+}
 import { Icon } from './Icon';
 
 interface ModalProps {
@@ -14,24 +20,30 @@ interface ModalProps {
 }
 
 /**
- * Modal on the native <dialog>: the browser provides the focus trap, Esc,
- * inert background and focus return to the opener.
+ * Modal on the native <dialog>: the browser provides the focus trap, Esc and
+ * the inert background. Focus starts on the element marked `data-autofocus`
+ * (or the first focusable one) and returns to the opener on close, also when
+ * the modal is unmounted while open.
  */
 export function Modal({ open, title, description, onClose, children, footer, size = 'md', busy = false }: ModalProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const descriptionId = useId();
+  const pointerDownOnBackdrop = useRef(false);
 
   useEffect(() => {
     const dialog = ref.current;
-    if (dialog === null) {
+    if (dialog === null || !open) {
       return;
     }
-    if (open && !dialog.open) {
-      dialog.showModal();
-    } else if (!open && dialog.open) {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    dialog.showModal();
+    dialog.querySelector<HTMLElement>('[data-autofocus]')?.focus();
+
+    return () => {
       dialog.close();
-    }
+      restoreFocus(opener);
+    };
   }, [open]);
 
   return (
@@ -46,10 +58,16 @@ export function Modal({ open, title, description, onClose, children, footer, siz
           onClose();
         }
       }}
+      // Close on a backdrop click only when the press also started there, so
+      // selecting text and releasing outside the panel keeps the dialog open.
+      onPointerDown={(event) => {
+        pointerDownOnBackdrop.current = event.target === event.currentTarget;
+      }}
       onClick={(event) => {
-        if (event.target === event.currentTarget && !busy) {
+        if (event.target === event.currentTarget && pointerDownOnBackdrop.current && !busy) {
           onClose();
         }
+        pointerDownOnBackdrop.current = false;
       }}
     >
       {open && (

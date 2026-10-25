@@ -14,14 +14,17 @@ export function SearchInput({ value, onChange, label, placeholder, debounceMs = 
   const [draft, setDraft] = useState(value);
   const [synced, setSynced] = useState(value);
 
-  // Follow outside changes (e.g. "clear filters") without an effect.
+  // Follow outside changes (e.g. "clear filters") without an effect, but keep
+  // what the user is typing when the outside value is just its trimmed form.
   if (value !== synced) {
     setSynced(value);
-    setDraft(value);
+    if (value !== draft.trim()) {
+      setDraft(value);
+    }
   }
 
   useEffect(() => {
-    if (draft === value) {
+    if (draft.trim() === value) {
       return;
     }
     const timer = setTimeout(() => {
@@ -42,6 +45,7 @@ export function SearchInput({ value, onChange, label, placeholder, debounceMs = 
         aria-label={label}
         placeholder={placeholder}
         value={draft}
+        maxLength={100}
         onChange={(event) => {
           setDraft(event.target.value);
         }}

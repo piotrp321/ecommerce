@@ -623,6 +623,21 @@ a.cell-title:hover {
   }
 }
 
+/* Narrow tables move secondary columns (e.g. SKU) under the main cell. */
+.table .only-narrow {
+  display: none;
+}
+
+@media (max-width: 899px) {
+  .table .col-wide {
+    display: none;
+  }
+
+  .table .only-narrow {
+    display: block;
+  }
+}
+
 /* ——— Pagination ——— */
 .pagination {
   display: flex;

@@ -37,6 +37,26 @@ describe('ProductsPage', () => {
     expect(await screen.findByText('1–20 z 36')).toBeInTheDocument();
   });
 
+  it('keeps a trailing space while typing a multi-word search', async () => {
+    renderApp('/products');
+    await table();
+    const search = screen.getByRole('searchbox', { name: 'Szukaj po nazwie lub SKU' });
+
+    fireEvent.change(search, { target: { value: 'Laptop ' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+
+    expect(await screen.findByText('1–4 z 4')).toBeInTheDocument();
+    expect(search).toHaveValue('Laptop ');
+  });
+
+  it('offers the first page when the page is out of range', async () => {
+    renderApp('/products?page=99');
+
+    expect(await screen.findByText('Ta strona nie istnieje')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Przejdź do pierwszej strony' }));
+    expect(await screen.findByText('1–20 z 36')).toBeInTheDocument();
+  });
+
   it('sorts by a column header', async () => {
     renderApp('/products');
     await table();
