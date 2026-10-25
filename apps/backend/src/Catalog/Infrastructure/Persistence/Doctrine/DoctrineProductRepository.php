@@ -17,6 +17,8 @@ use App\Catalog\Infrastructure\Persistence\Doctrine\Type\CategoryIdType;
 use App\Catalog\Infrastructure\Persistence\Doctrine\Type\ProductIdType;
 use App\Catalog\Infrastructure\Persistence\Doctrine\Type\SkuType;
 use App\Catalog\Infrastructure\Persistence\Doctrine\Type\SlugType;
+use App\Shared\Domain\Exception\InvalidValue;
+use Doctrine\DBAL\Exception\ForeignKeyConstraintViolationException;
 use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
 use Doctrine\ORM\EntityManagerInterface;
 
@@ -66,6 +68,9 @@ final readonly class DoctrineProductRepository implements ProductRepository
         try {
             $this->entityManager->persist($product);
             $this->entityManager->flush();
+        } catch (ForeignKeyConstraintViolationException) {
+            // The category was deleted after the application checked it.
+            throw new InvalidValue(\sprintf('Category "%s" does not exist.', $product->categoryId()));
         } catch (UniqueConstraintViolationException $exception) {
             // A concurrent request took the SKU or slug after the application checked it.
             throw match (true) {

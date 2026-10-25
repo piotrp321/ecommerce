@@ -29,7 +29,7 @@ final readonly class ProductPayload
         public int $vatRate,
         #[Assert\Length(max: Product::DESCRIPTION_MAX_LENGTH)]
         public ?string $description = null,
-        #[Assert\Uuid(strict: false)]
+        #[Assert\Uuid]
         public ?string $categoryId = null,
         #[Assert\NotBlank(groups: ['create'])]
         #[Assert\Regex('/^'.Sku::PATTERN.'$/D', groups: ['create'])]

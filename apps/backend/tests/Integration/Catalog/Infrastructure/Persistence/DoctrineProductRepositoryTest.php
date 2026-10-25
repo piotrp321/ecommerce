@@ -14,6 +14,7 @@ use App\Catalog\Domain\Product\ProductNotFound;
 use App\Catalog\Domain\Product\ProductRepository;
 use App\Catalog\Domain\Product\Sku;
 use App\Catalog\Domain\Slug;
+use App\Shared\Domain\Exception\InvalidValue;
 use App\Shared\Domain\Pricing\Money;
 use App\Shared\Domain\Pricing\VatRate;
 use App\Tests\Support\Catalog\CatalogFixtures;
@@ -93,7 +94,14 @@ final class DoctrineProductRepositoryTest extends DatabaseTestCase
         $this->products->save($this->newProduct('TEA-002', 'green-tea'));
     }
 
-    private function newProduct(string $sku, string $slug): Product
+    public function testTheDatabaseRejectsACategoryDeletedAfterTheApplicationCheckedIt(): void
+    {
+        $this->expectException(InvalidValue::class);
+
+        $this->products->save($this->newProduct('TEA-001', 'green-tea', CategoryId::generate()));
+    }
+
+    private function newProduct(string $sku, string $slug, ?CategoryId $categoryId = null): Product
     {
         return Product::create(
             ProductId::generate(),
@@ -103,7 +111,7 @@ final class DoctrineProductRepositoryTest extends DatabaseTestCase
             null,
             Money::fromDecimal('1.00'),
             VatRate::Standard,
-            null,
+            $categoryId,
             new \DateTimeImmutable(),
         );
     }

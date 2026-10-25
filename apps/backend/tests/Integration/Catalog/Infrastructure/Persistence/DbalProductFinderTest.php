@@ -98,9 +98,14 @@ final class DbalProductFinderTest extends DatabaseTestCase
         self::assertSame(3, $page->totalItems);
         self::assertSame(2, $page->totalPages());
 
+        // The most expensive allowed product: net × 123 does not fit a 32-bit integer.
+        $this->fixtures->product('D', name: 'D', netPrice: '9999999.99', vatRate: VatRate::Standard, createdAt: '2026-10-04');
+        self::assertSame(['D', 'A', 'C', 'B'], $this->names(sort: ProductSort::PriceDescending));
+        self::assertSame(['B', 'C', 'A', 'D'], $this->names(sort: ProductSort::PriceAscending));
+
         $beyond = $this->finder->search(new ProductCriteria(page: 3, perPage: 2));
         self::assertSame([], $beyond->items);
-        self::assertSame(3, $beyond->totalItems);
+        self::assertSame(4, $beyond->totalItems);
     }
 
     /**

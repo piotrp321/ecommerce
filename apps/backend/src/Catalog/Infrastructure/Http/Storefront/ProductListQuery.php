@@ -16,7 +16,7 @@ final readonly class ProductListQuery
         #[Assert\Regex('/^'.Slug::PATTERN.'$/D')]
         #[Assert\Length(max: Slug::MAX_LENGTH)]
         public ?string $category = null,
-        #[Assert\Positive]
+        #[Assert\Range(min: 1, max: ProductCriteria::MAX_PAGE)]
         public int $page = 1,
         #[Assert\Range(min: 1, max: ProductCriteria::MAX_PER_PAGE)]
         public int $perPage = 20,

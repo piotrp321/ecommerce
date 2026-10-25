@@ -6,6 +6,7 @@ namespace App\Catalog\Domain\Product;
 
 use App\Catalog\Domain\Category\CategoryId;
 use App\Catalog\Domain\Slug;
+use App\Shared\Domain\Exception\InvalidValue;
 
 interface ProductRepository
 {
@@ -30,6 +31,7 @@ interface ProductRepository
      *
      * @throws DuplicateSku         when the SKU is taken (also by a concurrent request)
      * @throws DuplicateProductSlug when the slug is taken (also by a concurrent request)
+     * @throws InvalidValue         when its category was deleted by a concurrent request
      */
     public function save(Product $product): void;
 }

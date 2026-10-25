@@ -26,8 +26,11 @@ use Symfony\Component\Uid\Uuid;
  */
 final readonly class DbalProductFinder implements ProductFinder
 {
-    /** Same formula as VatRate::grossUnitPrice(), in integer arithmetic. */
-    private const string GROSS_PRICE = '(p.net_price * (100 + p.vat_rate) + 50) / 100';
+    /**
+     * Same formula as VatRate::grossUnitPrice(), in integer arithmetic. BIGINT:
+     * net_price × 123 exceeds INT for net prices above ~174 592 PLN.
+     */
+    private const string GROSS_PRICE = '(p.net_price::bigint * (100 + p.vat_rate) + 50) / 100';
 
     public function __construct(private Connection $connection)
     {

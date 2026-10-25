@@ -25,7 +25,10 @@ info:
     `PLN`. Calculated in grosze (integers): `gross = round_half_up(net × (1 + VAT))`
     is the only rounding (docs/specs/01-placing-order.md, section 3.4).
 
-    **Errors.** RFC 9457 `application/problem+json`; validation errors add `violations`.
+    **Errors.** RFC 9457 `application/problem+json`. Validation errors of the request
+    format add `violations`; business-rule errors (e.g. unknown category, zero price)
+    are 422 with `detail` only. Every operation with a JSON body also answers
+    `400` for malformed JSON and `415` without `Content-Type: application/json`.
 servers:
   - url: /api
     description: Public address (same origin as the store and the admin panel)
@@ -180,7 +183,8 @@ paths:
           headers:
             Location:
               schema: { type: string }
-              example: /admin/catalog/products/0192f0c4-7c2a-7c51-9b1e-2f3c4d5e6f70
+              description: Relative reference to the new product (resolves to /api/admin/catalog/products/{id}).
+              example: products/0192f0c4-7c2a-7c51-9b1e-2f3c4d5e6f70
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AdminProduct' }
@@ -301,6 +305,8 @@ paths:
           headers:
             Location:
               schema: { type: string }
+              description: Relative reference to the new category (resolves to /api/admin/catalog/categories/{id}).
+              example: categories/0192f0c4-7c2a-7c51-9b1e-2f3c4d5e6f70
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AdminCategory' }
@@ -403,6 +409,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
 
 components:
@@ -425,7 +432,7 @@ components:
     Page:
       name: page
       in: query
-      schema: { type: integer, minimum: 1, default: 1 }
+      schema: { type: integer, minimum: 1, maximum: 1000000, default: 1 }
     PerPage:
       name: perPage
       in: query
@@ -451,7 +458,7 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
     Conflict:
-      description: Business rule conflict (duplicate SKU or slug, category still has products)
+      description: Business rule conflict (duplicate SKU or slug, category still has products, concurrent first stock update, to be retried)
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -645,9 +652,9 @@ components:
       allOf:
         - $ref: '#/components/schemas/Problem'
         - type: object
-          required: [violations]
           properties:
             violations:
+              description: Present for request format errors; absent for business-rule errors.
               type: array
               items:
                 type: object

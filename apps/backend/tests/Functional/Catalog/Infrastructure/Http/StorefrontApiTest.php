@@ -61,6 +61,7 @@ final class StorefrontApiTest extends ApiTestCase
 
     #[TestWith(['page=0'])]
     #[TestWith(['page=abc'])]
+    #[TestWith(['page=100000000000000000&perPage=100'])]
     #[TestWith(['perPage=101'])]
     #[TestWith(['sort=random'])]
     #[TestWith(['category=Not%20a%20slug'])]

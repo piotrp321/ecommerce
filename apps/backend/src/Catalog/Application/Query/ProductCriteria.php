@@ -7,6 +7,8 @@ namespace App\Catalog\Application\Query;
 final readonly class ProductCriteria
 {
     public const int MAX_PER_PAGE = 100;
+    /** Keeps the offset far from integer overflow. */
+    public const int MAX_PAGE = 1_000_000;
 
     public function __construct(
         public ProductStatusFilter $status = ProductStatusFilter::All,
@@ -18,7 +20,7 @@ final readonly class ProductCriteria
         public int $page = 1,
         public int $perPage = 20,
     ) {
-        if ($page < 1 || $perPage < 1 || $perPage > self::MAX_PER_PAGE) {
+        if ($page < 1 || $page > self::MAX_PAGE || $perPage < 1 || $perPage > self::MAX_PER_PAGE) {
             throw new \InvalidArgumentException('Invalid pagination.');
         }
     }
