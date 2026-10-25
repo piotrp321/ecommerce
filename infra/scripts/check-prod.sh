@@ -4,15 +4,15 @@
 # Ports: CHECK_PROD_HTTP_PORT (default 8080), CHECK_PROD_HTTPS_PORT (default 8443).
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
-IMAGE="${IMAGES_PREFIX:-}ecommerce-php"
+IMAGE="${IMAGES_PREFIX:-}ecommerce-backend"
 HTTPS_PORT="${CHECK_PROD_HTTPS_PORT:-8443}"
 export PROD_HTTP_PORT="${CHECK_PROD_HTTP_PORT:-8080}"
 export PROD_HTTPS_PORT="$HTTPS_PORT" PROD_HTTP3_PORT="$HTTPS_PORT"
 
 compose() {
-	docker compose -f compose.yaml -f compose.prod.yaml -f compose.prod-check.yaml "$@"
+	docker compose -f compose.yaml -f compose.prod.yaml -f infra/scripts/compose.prod-check.yaml "$@"
 }
 
 failures=0
@@ -47,11 +47,11 @@ compose up --detach --no-build --wait >/dev/null 2>&1 && pass "containers health
 
 expect_health 200 "health check with special-character database password"
 
-compose exec -T php php bin/console doctrine:migrations:migrate --no-interaction --allow-no-migration >/dev/null 2>&1 \
+compose exec -T backend php bin/console doctrine:migrations:migrate --no-interaction --allow-no-migration >/dev/null 2>&1 \
 	&& pass "migrations run on demand (bin/console doctrine:migrations:migrate)" || fail "migrations failed"
 
-[ "$(compose exec -T php id -u)" = "1000" ] && pass "php runs as uid 1000" || fail "php does not run as uid 1000"
-compose exec -T php sh -c 'touch /app/src/.write-test' >/dev/null 2>&1 \
+[ "$(compose exec -T backend id -u)" = "1000" ] && pass "backend runs as uid 1000" || fail "backend does not run as uid 1000"
+compose exec -T backend sh -c 'touch /app/src/.write-test' >/dev/null 2>&1 \
 	&& fail "application code is writable" || pass "application code is read-only"
 
 compose stop database >/dev/null 2>&1
@@ -63,7 +63,7 @@ for _ in $(seq 1 20); do
 done
 expect_health 200 "database recovered"
 
-if compose logs php 2>&1 | grep -qF "$POSTGRES_PASSWORD"; then
+if compose logs backend 2>&1 | grep -qF "$POSTGRES_PASSWORD"; then
 	fail "database password found in logs"
 else
 	pass "database password absent from logs"

@@ -11,12 +11,14 @@
 name: ecommerce
 
 services:
-  php:
+  backend:
     build:
+      # Repository root as context, restricted by infra/docker/backend/Dockerfile.dockerignore.
       context: .
+      dockerfile: infra/docker/backend/Dockerfile
     restart: unless-stopped
     environment:
-      SERVER_NAME: ${SERVER_NAME:-localhost}, php:80
+      SERVER_NAME: ${SERVER_NAME:-localhost}, backend:80
       DATABASE_NAME: ${POSTGRES_DB:-app}
       DATABASE_USER: ${POSTGRES_USER:-app}
       DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-!ChangeMe!}

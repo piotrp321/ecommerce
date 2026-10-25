@@ -10,8 +10,8 @@
 name: ecommerce-prod
 
 services:
-  php:
-    image: ${IMAGES_PREFIX:-}ecommerce-php
+  backend:
+    image: ${IMAGES_PREFIX:-}ecommerce-backend
     build:
       target: frankenphp_prod
     environment:
