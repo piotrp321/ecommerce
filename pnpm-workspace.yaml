@@ -1,0 +1,6 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Fail fast on a Node.js version other than the one pinned in package.json/.node-version.
+engineStrict: true

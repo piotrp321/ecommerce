@@ -2,3 +2,7 @@
 .idea
 .claude
 ###< IDE ###
+
+###> node ###
+node_modules/
+###< node ###

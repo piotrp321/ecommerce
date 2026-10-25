@@ -1,0 +1,16 @@
+{
+  "name": "ecommerce",
+  "private": true,
+  "description": "pnpm workspace of the e-commerce frontends (apps/admin; later apps/store, packages/sdk)",
+  "packageManager": "pnpm@12.12.1",
+  "engines": {
+    "node": ">=24.21.0 <25"
+  },
+  "scripts": {
+    "dev:admin": "pnpm --filter admin dev",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "build": "pnpm -r build"
+  }
+}
