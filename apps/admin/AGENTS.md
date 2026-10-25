@@ -18,7 +18,7 @@ Panel administracyjny: React 19 + Vite 8 + TypeScript (SPA). Uzupełnia główny
 
 ## Struktura i tryb demonstracyjny
 
-- `src/api`: port danych `AdminApi` (ekrany zależą tylko od niego), `ApiError` (RFC 9457) i **tymczasowe** modele widoku (`types.ts`), nie kopie DTO backendu. Po wprowadzeniu SDK z OpenAPI (etap 5) zastąp je typami SDK i mapowaniem w adapterze; nie rozbudowuj ich ręcznie.
+- `src/api`: port danych `AdminApi` (ekrany zależą tylko od niego), `ApiError` (RFC 9457) i **tymczasowe** typy (`types.ts`). Są bliskie DTO z kontraktu `docs/api/openapi.yaml`, co jest zaakceptowanym wyjątkiem do czasu SDK. Po wprowadzeniu SDK z OpenAPI (etap 5) zastąp je typami SDK i mapowaniem w adapterze; nie rozbudowuj ich ręcznie.
 - `src/demo`: jedyna obecna implementacja `AdminApi`, dane w pamięci karty (bez sieci i storage). Symuluje odpowiedzi błędów kontraktu tylko po to, by pokazać stany UI; nie jest źródłem reguł biznesowych. Nie liczy VAT: po zmianie ceny brutto jest nieznane (`null`), dopóki nie poda go backend.
 - Tryb demo działa w `pnpm dev:admin` i w buildzie z `VITE_ADMIN_DEMO=true`. Zwykły build produkcyjny nie zawiera danych demo i pokazuje ekran „panel niepołączony z API”.
 - Prawdziwy klient API powstanie razem z logowaniem administratorów (sesja w ciasteczkach HttpOnly, CSRF). Do tego czasu nie podłączaj zapisu do API i nie używaj `ADMIN_API_TOKEN` w przeglądarce.
@@ -26,7 +26,7 @@ Panel administracyjny: React 19 + Vite 8 + TypeScript (SPA). Uzupełnia główny
 
 ## Wymagania do integracji z API (bez zmian w backendzie na tym etapie)
 
-Szkic kontraktu admina nie obejmuje jeszcze wszystkiego, czego używa UI. Do uzgodnienia z backendem przy integracji:
+Kontrakt admina (`docs/api/openapi.yaml`) nie obejmuje jeszcze wszystkiego, czego używa UI. Do uzgodnienia z backendem przy integracji:
 
 - `GET /admin/catalog/products`: parametr sortowania (nazwa, cena netto, data utworzenia). Dziś obsługuje go tylko adapter demo.
 - Lista stanów magazynowych z filtrem dostępności (brak, niski stan, dostępny). Dziś magazyn korzysta z listy produktów.

@@ -1,12 +1,11 @@
 /**
- * PROVISIONAL view models of the admin panel: what the screens display and
- * send, not copies of backend DTOs.
+ * PROVISIONAL types of the admin panel (an accepted exception until the SDK).
  *
- * Their shape was taken from the draft contract (`docs/api/openapi.yaml` on
- * `feature/catalog-backend`, still in review) only as far as the screens need
- * it. They are NOT the API contract. When the SDK generated from OpenAPI
- * exists (`packages/sdk`, stage 5), use its types instead and map them in the
- * real `AdminApi` adapter. Do not extend these by hand to follow the backend.
+ * They follow the catalog contract `docs/api/openapi.yaml` closely, so they are
+ * close to its DTOs rather than screen-specific view models. This is accepted
+ * only until the SDK generated from OpenAPI exists (`packages/sdk`, stage 5):
+ * then use its types and map them in the real `AdminApi` adapter. Do not extend
+ * these by hand to follow backend changes. They are NOT the API contract.
  */
 
 export type Uuid = string;
@@ -85,8 +84,8 @@ export interface Page<T> {
 export type ProductStatusFilter = 'all' | 'active' | 'inactive';
 
 /**
- * `sort` is not in the draft admin contract yet (it lists newest first);
- * the demo adapter supports it so the UI can be reviewed. See the PR notes.
+ * `sort` is not in the admin contract yet (it lists newest first);
+ * the demo adapter supports it so the UI can be reviewed. See the integration requirements in apps/admin/AGENTS.md.
  */
 export type ProductSort = 'newest' | 'name' | '-name' | 'price' | '-price';
 

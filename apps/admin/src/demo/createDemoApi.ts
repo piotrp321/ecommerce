@@ -4,7 +4,7 @@
  *
  * - Nothing leaves the browser: no network, no storage; a reload restores the
  *   demo data.
- * - It mimics the draft contract's answers (problem details, 409/422) only
+ * - It mimics the catalog contract's answers (problem details, 409/422) only
  *   roughly, to exercise the error states of the UI. It is NOT a second
  *   implementation of the business rules: the backend stays the source of
  *   truth and this file is deleted together with the demo mode.

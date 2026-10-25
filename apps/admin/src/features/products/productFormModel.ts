@@ -1,7 +1,7 @@
 import type { CreateProductInput, Product, VatRate } from '../../api/types';
 import { amountToInput, normalizeAmountInput } from '../../lib/money';
 
-/** VAT rates offered in the form, as listed by the draft contract. The backend validates them. */
+/** VAT rates offered in the form, as listed by the catalog contract (docs/api/openapi.yaml). The backend validates them. */
 export const VAT_RATE_OPTIONS: readonly VatRate[] = [23, 8, 5, 0];
 
 export interface ProductFormValues {
@@ -44,7 +44,7 @@ const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const NET_PRICE = /^(0|[1-9]\d{0,6})\.\d{2}$/;
 
 /**
- * Format checks taken from the draft contract, for quick feedback while typing.
+ * Format checks taken from the catalog contract, for quick feedback while typing.
  * Business rules (unique SKU/slug, price range, existing category) are checked
  * only by the backend, and its answer is shown in the form.
  */
