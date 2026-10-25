@@ -1,6 +1,6 @@
 # Monorepo commands. Convention:
 # - aggregate targets without a prefix (bootstrap, up, check, check-prod...),
-# - per-application targets prefixed with the app name (backend-*, admin-*; later store-*),
+# - per-application targets prefixed with the app name (backend-*, admin-*, store-*),
 # - pnpm workspace targets prefixed with pnpm-.
 # None of the targets removes volumes or data.
 
@@ -18,7 +18,8 @@ PNPM        = $(DOCKER_COMP) run --rm --no-deps admin pnpm
 	pnpm-install pnpm \
 	backend-sh backend-install backend-composer backend-console backend-migrate backend-db-test \
 	backend-test backend-stan backend-arch backend-check backend-build-prod backend-check-prod \
-	admin-lint admin-typecheck admin-test admin-build admin-check admin-build-prod admin-check-prod
+	admin-lint admin-typecheck admin-test admin-build admin-check admin-build-prod admin-check-prod \
+	store-lint store-typecheck store-test store-build store-check store-build-prod store-check-prod
 
 ## —— Help ———————————————————————————————————————————————————————————————————
 help: ## List available targets
@@ -41,11 +42,11 @@ logs: ## Follow the container logs
 
 install: pnpm-install backend-install ## Install the dependencies of all applications (dev; backend needs `make up`)
 
-check: backend-check admin-check ## Run all quality gates (required before every commit)
+check: backend-check admin-check store-check ## Run all quality gates (required before every commit)
 
-build-prod: backend-build-prod admin-build-prod ## Build all production images
+build-prod: backend-build-prod admin-build-prod store-build-prod ## Build all production images
 
-check-prod: backend-check-prod admin-check-prod ## Check all production images (backend 8080/8443, admin 8081)
+check-prod: backend-check-prod admin-check-prod store-check-prod ## Check all production images (backend 8080/8443, admin 8081, store 8082)
 
 ## —— pnpm workspace (JavaScript apps) ———————————————————————————————————————
 pnpm-install: ## Install the workspace dependencies into the container volumes (frozen lockfile)
@@ -121,3 +122,27 @@ admin-build-prod: ## Build the admin production image (static files served by un
 
 admin-check-prod: admin-build-prod ## Run the admin prod image on 127.0.0.1:8081 and check it
 	@./infra/scripts/check-prod-admin.sh
+
+## —— Store (apps/store, Next.js) ———————————————————————————————————————————
+# One-off container from the store image (its own node_modules and .next volumes).
+STORE_PNPM  = $(DOCKER_COMP) run --rm --no-deps store pnpm
+
+store-lint: ## Run ESLint
+	@$(STORE_PNPM) --filter store lint
+
+store-typecheck: ## Generate route types and run the TypeScript type check
+	@$(STORE_PNPM) --filter store typecheck
+
+store-test: ## Run Vitest
+	@$(STORE_PNPM) --filter store test
+
+store-build: ## Build the standalone Next.js server
+	@$(STORE_PNPM) --filter store build
+
+store-check: store-lint store-typecheck store-test store-build ## Run all store quality gates
+
+store-build-prod: ## Build the store production image (standalone Next.js, unprivileged node user)
+	@docker build --pull --file infra/docker/store/Dockerfile --target store_prod --tag $(IMAGES_PREFIX)ecommerce-store .
+
+store-check-prod: store-build-prod ## Run the store prod image on 127.0.0.1:8082 and check it
+	@./infra/scripts/check-prod-store.sh
