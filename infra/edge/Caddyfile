@@ -1,0 +1,62 @@
+# Central edge proxy (production): the only public entry point.
+# - TLS termination with automatic certificates for STORE_DOMAIN and ADMIN_DOMAIN,
+# - routing by domain and path:
+#     https://STORE_DOMAIN/api/*  -> backend (prefix /api removed), everything else -> store
+#     https://ADMIN_DOMAIN/api/*  -> backend (prefix /api removed), everything else -> admin
+# - plain HTTP only redirects to HTTPS (and serves ACME HTTP challenges).
+# Runs as an unprivileged user on 8080/8443; Compose publishes them as 80/443.
+# Upstreams are resolved per connection, so each app can be redeployed on its own.
+{
+	http_port 8080
+	https_port 8443
+	# Redirects are explicit (below), so they point to the public port 443, not 8443.
+	auto_https disable_redirects
+	{$CADDY_GLOBAL_OPTIONS}
+}
+
+(security_headers) {
+	header {
+		-Server
+		-Via
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+	}
+}
+
+(backend_api) {
+	# Same-origin REST API: /api/... reaches the backend without the prefix
+	# (contract: OpenAPI servers url /api). Authorization headers pass unchanged.
+	handle_path /api/* {
+		reverse_proxy backend:80
+	}
+}
+
+{$STORE_DOMAIN} {
+	import security_headers
+	encode zstd gzip
+	request_body {
+		max_size 10MB
+	}
+	import backend_api
+	handle {
+		reverse_proxy store:3000
+	}
+	log
+}
+
+{$ADMIN_DOMAIN} {
+	import security_headers
+	encode zstd gzip
+	request_body {
+		max_size 10MB
+	}
+	import backend_api
+	handle {
+		reverse_proxy admin:8080
+	}
+	log
+}
+
+http://{$STORE_DOMAIN}, http://{$ADMIN_DOMAIN} {
+	redir https://{host}{uri} 308
+}
