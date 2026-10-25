@@ -24,8 +24,12 @@ but there are no user accounts or login yet.
 2. **Modules talk through ports, one Deptrac rule.**
    - Catalog declares `ProductAvailability` (Application); Inventory declares `KnownProducts` (Application)
      and publishes the `StockLevels` query API.
-   - Both adapters live in `Catalog\Infrastructure\Inventory`, so the only new rule is
-     `Catalog_Infrastructure → Inventory_Application`. Inventory does not depend on Catalog.
+   - Both adapters live in `Catalog\Infrastructure\Inventory`, a Deptrac layer of their own
+     (`Catalog_InventoryAdapters`); it is the only code allowed to use `Inventory_Application`.
+     Inventory does not depend on Catalog.
+   - Domain and Application may not use framework components either (Deptrac layer `Framework`:
+     validation, serialization, security, messaging, DI…); only small value libraries
+     (`symfony/uid`, `psr/clock`) are allowed there.
    - Availability of a product list is looked up once per page (`StockLevels::forProducts()`), never per product.
    - `StockLevel` already exposes `onHand`, `reserved` and `available`; `reserved` is 0 until Milestone 4.
 
@@ -44,7 +48,11 @@ but there are no user accounts or login yet.
      advisory lock and rejects a cycle or a too deep branch, so concurrent changes that pass the
      application check one by one cannot break the tree together. This relies on READ COMMITTED
      (PostgreSQL's default): under REPEATABLE READ the trigger would not see changes committed after the
-     transaction started.
+     transaction started, so it refuses other isolation levels. Its recursions detect cycles, so a tree
+     broken from outside (e.g. a restore with triggers disabled) makes writes fail at once instead of
+     looping while holding the lock. Tests with two database connections cover these guarantees.
+   - Names (products and categories) are ordered by Polish rules through the ICU collation `pl-x-icu`;
+     the database default orders by byte value.
    - Deleting a category with products or subcategories is refused (409); nothing is deleted or moved
      implicitly. Foreign keys (`parent_id`, `catalog_product.category_id`) back this up.
 
