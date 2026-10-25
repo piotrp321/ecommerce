@@ -16,6 +16,24 @@ Panel administracyjny: React 19 + Vite 8 + TypeScript (SPA). Uzupełnia główny
 - Żądania zmieniające stan muszą przechodzić ochronę CSRF, gdy backend ją wprowadzi.
 - Zmienne `VITE_*` trafiają do publicznego bundla: nigdy nie umieszczaj w nich sekretów. Adresy API nie są potrzebne, bo `/api` jest same-origin.
 
+## Struktura i tryb demonstracyjny
+
+- `src/api`: port danych `AdminApi` (ekrany zależą tylko od niego), `ApiError` (RFC 9457) i **tymczasowe** typy (`types.ts`). Są bliskie DTO z kontraktu `docs/api/openapi.yaml`, co jest zaakceptowanym wyjątkiem do czasu SDK. Po wprowadzeniu SDK z OpenAPI (etap 5) zastąp je typami SDK i mapowaniem w adapterze; nie rozbudowuj ich ręcznie.
+- `src/demo`: jedyna obecna implementacja `AdminApi`, dane w pamięci karty (bez sieci i storage). Symuluje odpowiedzi błędów kontraktu tylko po to, by pokazać stany UI; nie jest źródłem reguł biznesowych. Nie liczy VAT: po zmianie ceny brutto jest nieznane (`null`), dopóki nie poda go backend.
+- Tryb demo działa w `pnpm dev:admin` i w buildzie z `VITE_ADMIN_DEMO=true`. Zwykły build produkcyjny nie zawiera danych demo i pokazuje ekran „panel niepołączony z API”.
+- Prawdziwy klient API powstanie razem z logowaniem administratorów (sesja w ciasteczkach HttpOnly, CSRF). Do tego czasu nie podłączaj zapisu do API i nie używaj `ADMIN_API_TOKEN` w przeglądarce.
+- `src/components`: komponenty prezentacyjne i design system (tokeny w `src/styles/tokens.css`); `src/features/*`: strony i formularze; `src/lib`: router na History API, formatowanie kwot (stringi dziesiętne, bez floatów), `useAsync`.
+
+## Wymagania do integracji z API (bez zmian w backendzie na tym etapie)
+
+Kontrakt admina (`docs/api/openapi.yaml`) nie obejmuje jeszcze wszystkiego, czego używa UI. Do uzgodnienia z backendem przy integracji:
+
+- `GET /admin/catalog/products`: parametr sortowania (nazwa, cena netto, data utworzenia). Dziś obsługuje go tylko adapter demo.
+- Lista stanów magazynowych z filtrem dostępności (brak, niski stan, dostępny). Dziś magazyn korzysta z listy produktów.
+- Statystyki dashboardu (liczba produktów bez stanu, niski stan). Dziś liczone z jednej strony produktów.
+- Potwierdzenie nazw `propertyPath` w błędach walidacji (np. `onHand`, `categoryId`), które formularze mapują na pola.
+- Logowanie administratorów (sesja HttpOnly, CSRF) to osobny etap. Do tego czasu panel nie łączy się z API.
+
 ## Komendy
 
 Z katalogu głównego (Docker): `make admin-lint`, `make admin-typecheck`, `make admin-test`, `make admin-build`, `make admin-check` (część `make check`), `make admin-check-prod`.
