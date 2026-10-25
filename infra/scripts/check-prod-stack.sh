@@ -65,6 +65,11 @@ APP_SECRET="$(openssl rand -hex 32)"
 POSTGRES_PASSWORD="$(openssl rand -hex 12)p@ss:w/rd#?%&=+\$!'\" ;"
 export APP_SECRET POSTGRES_PASSWORD
 
+# An empty STORE_BACKEND_URL (shell or .env) selects the demo data; the check pins the API.
+store_url="$(STORE_BACKEND_URL= compose config --format json 2>/dev/null | tr -d ' \n' | grep -o '"STORE_BACKEND_URL":"[^"]*"' | head -n1 || true)"
+[ "$store_url" = '"STORE_BACKEND_URL":"http://backend:80"' ] \
+	&& pass "store runs in API mode even with STORE_BACKEND_URL= in the environment or .env" || fail "store backend URL of the check: ${store_url:-missing}"
+
 trap 'compose down --remove-orphans >/dev/null 2>&1 || true' EXIT
 # The store health check (/healthz) does not depend on the backend, so the store is
 # healthy before the database schema exists.
