@@ -88,6 +88,7 @@ Inna wersja Node niż w `.node-version` kończy `pnpm install` błędem (`engine
 | `make install` | Instalacja zależności wszystkich aplikacji (dev; Composer wymaga `make up`) |
 | `make pnpm-install` / `make pnpm c="…"` | Zależności JS do wolumenów Dockera / dowolna komenda pnpm w kontenerze |
 | `make check` | Wszystkie bramki jakości: obowiązkowe przed commitem |
+| `make contract-lint` | Lint kontraktu API `docs/api/openapi.yaml` (Redocly) |
 | `make build-prod` | Budowa obrazów produkcyjnych (bez sekretów) |
 | `make check-prod` | Kontrola obrazów admina (8081) i sklepu (8082) oraz całej topologii prod z edge (8080/8443) |
 | `make edge-build-prod` / `make stack-check-prod` | Obraz edge / kontrola całej topologii prod |
@@ -106,7 +107,7 @@ Inna wersja Node niż w `.node-version` kończy `pnpm install` błędem (`engine
 
 GitHub Actions (`.github/workflows/ci.yml`) uruchamia się dla każdego Pull Requesta do `main` i po pushu na `main`, na runnerze `ubuntu-24.04`, z tokenem tylko do odczytu. Używa tych samych komend co lokalnie:
 
-- **Quality gates:** `make bootstrap` (dokładnie jak w „Uruchomienie”) i `make check` (backend: composer validate, lint, Deptrac, PHPStan max, PHPUnit; admin i sklep: ESLint, TypeScript, Vitest, build),
+- **Quality gates:** `make bootstrap` (dokładnie jak w „Uruchomienie”) i `make check` (lint kontraktu API; backend: composer validate, lint, Deptrac, PHPStan max, PHPUnit z walidacją każdej odpowiedzi API względem kontraktu i zgodnością tras; admin i sklep: ESLint, TypeScript, Vitest, build),
 - **Production images:** `make check-prod` (obrazy admina i sklepu osobno, potem cała topologia z edge, z jednorazowymi, generowanymi sekretami).
 
 Workflow nie korzysta z żadnych sekretów repozytorium.
