@@ -10,6 +10,11 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   // apps/store/AGENTS.md is maintained by the project; next dev must not write to it.
   agentRules: false,
+  // Demo photos are resized by their CDN (src/lib/image-loader.ts), not by this server.
+  images: {
+    loader: 'custom',
+    loaderFile: './src/lib/image-loader.ts',
+  },
   // Set STORE_DEV_POLLING=1 if file changes on a bind mount are not detected.
   ...(process.env.STORE_DEV_POLLING === '1' ? { watchOptions: { pollIntervalMs: 500 } } : {}),
   headers: () =>
