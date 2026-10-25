@@ -30,13 +30,13 @@ jobs:
 
       # Exactly the fresh-clone setup documented in README: build the dev images,
       # install the pnpm workspace into its volumes, start PostgreSQL, the backend
-      # and the admin dev server, install Composer dependencies, run migrations.
+      # and the admin/store dev servers, install Composer dependencies, run migrations.
       - name: Bootstrap the development environment
         run: make bootstrap
 
       # Backend: composer validate, lint:container, lint:yaml, Deptrac, PHPStan
       # (level max) and PHPUnit (test database prepared by make backend-db-test).
-      # Admin: ESLint, TypeScript type check, Vitest and the Vite production build.
+      # Admin and store: ESLint, TypeScript type check, Vitest and the production build.
       - name: Run all quality gates
         run: make check
 
@@ -60,6 +60,6 @@ jobs:
 
       # Builds the prod images without secrets and checks them: the backend in an
       # ephemeral project with one-time generated secrets (never real production
-      # values), the admin static image read-only with all capabilities dropped.
+      # values); the admin and store images read-only with all capabilities dropped.
       - name: Build and check the production images
         run: make check-prod
