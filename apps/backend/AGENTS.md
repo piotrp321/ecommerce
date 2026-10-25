@@ -9,6 +9,7 @@ Ten plik jest też plikiem recepty `symfony/framework-bundle` (patrz `symfony.lo
 
 - Wersje i zainstalowane pakiety: `composer.json`, `symfony.lock`. Nie zakładaj, że pakiet jest zainstalowany (np. Twig, Messenger, maker-bundle), dopóki tam go nie ma.
 - Logika biznesowa (ceny, stany magazynowe, zamówienia, płatności) jest wyłącznie w backendzie. Frontendy jej nie duplikują.
+- Kontrakt REST API: [`docs/api/openapi.yaml`](../../docs/api/openapi.yaml). Każdą zmianę endpointu lub formatu JSON wprowadzaj w tym samym commicie w kontrakcie.
 
 ## Komendy
 
@@ -47,6 +48,14 @@ Modularny monolit, DDD + architektura heksagonalna (Clean Architecture). Reguły
 - `Shared` tylko dla elementów rzeczywiście używanych przez kilka modułów (np. `Money`). `Shared` nie zależy od żadnego modułu.
 - Autoryzacja zawsze na backendzie, niezależnie od zabezpieczeń interfejsu.
 - Nie dodawaj `skip_violations` ani wyjątków w `deptrac.yaml`, żeby uciszyć naruszenie. Popraw kod albo zapytaj użytkownika o zmianę reguły.
+- Moduły rozmawiają przez porty: moduł potrzebujący danych definiuje interfejs w swojej warstwie `Application`, a adapter łączący moduły leży w `Infrastructure` (np. `src/Catalog/Infrastructure/Inventory`). Dane do list pobieraj zbiorczo (jedno zapytanie na stronę), bez N+1.
+
+## API
+
+- Klienci wołają `/api/...`, proxy usuwa prefiks, więc trasy Symfony są bez `/api` ([ADR-0005](../../docs/adr/0005-catalog-inventory-and-admin-api-access.md)).
+- `/catalog/...` (i inne publiczne): tylko odczyt. Każda operacja zapisu jest pod `/admin/...`, za firewallem `admin_api`; pilnuje tego test `AdminApiSecurityTest`.
+- Trasy JSON mają `format: 'json'`. Błędy to `application/problem+json` (`ApiExceptionSubscriber`): wyjątki domenowe `NotFound` → 404, `Conflict` → 409, `InvalidValue` → 422.
+- Administracyjne API chroni **tymczasowy** token Bearer z sekretu `ADMIN_API_TOKEN` (min. 32 znaki, pusty = brak dostępu). Tylko testy i wywołania serwerowe; nigdy w kodzie przeglądarki ani w zmiennych `VITE_*`/`NEXT_PUBLIC_*`. Przed podłączeniem panelu admina zastąpi go logowanie z sesją HttpOnly i CSRF. Lokalnie ustaw go w `.env.local` (`openssl rand -hex 32`); testy generują własny.
 
 ## Konwencje Symfony
 
@@ -67,6 +76,7 @@ Modularny monolit, DDD + architektura heksagonalna (Clean Architecture). Reguły
 
 ## Struktura
 
-- `src/<Moduł>/<Warstwa>/`: kod aplikacji; obecnie tylko `src/Shared/Infrastructure/Http/` (`/health`)
-- `tests/Unit/`, `tests/Functional/`: struktura katalogów odzwierciedla `src/`
+- `src/<Moduł>/<Warstwa>/`: kod aplikacji; moduły `Catalog`, `Inventory` i `Shared` (`Money`, `VatRate`, problem details, bezpieczeństwo API, `/health`)
+- mapowania Doctrine: `src/<Moduł>/Infrastructure/Persistence/Doctrine/Mapping/*.orm.xml`, typy DBAL dla value objects z `#[AsDbalType]`
+- `tests/Unit/` (bez kernela), `tests/Integration/` (`KernelTestCase` z bazą: repozytoria, zapytania, schemat), `tests/Functional/` (`WebTestCase`, HTTP): struktura katalogów odzwierciedla `src/`; `tests/Support/`: wspólne klasy testów (czyszczenie bazy, fixtures, repozytoria w pamięci)
 - Obraz Docker backendu: `infra/docker/backend/` (Dockerfile, Caddyfile, PHP ini, entrypoint prod)

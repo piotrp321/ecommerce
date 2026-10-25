@@ -1,0 +1,29 @@
+security:
+    # No user accounts yet. The admin API identity comes from the token handler.
+    providers:
+        no_users: { memory: null }
+
+    firewalls:
+        dev:
+            # Ensure dev tools and static assets are always allowed
+            pattern: ^/(_profiler|_wdt|assets|build)/
+            security: false
+        # Administrative API: every route under /admin/ (writes included).
+        # INTERIM bearer token from the ADMIN_API_TOKEN secret, see ADR-0005.
+        admin_api:
+            pattern: ^/admin/
+            stateless: true
+            provider: no_users
+            access_token:
+                token_handler: App\Shared\Infrastructure\Security\AdminApiTokenHandler
+                failure_handler: App\Shared\Infrastructure\Security\ApiSecurityResponses
+            entry_point: App\Shared\Infrastructure\Security\ApiSecurityResponses
+            access_denied_handler: App\Shared\Infrastructure\Security\ApiSecurityResponses
+        # Public read-only API and /health: no authentication.
+        main:
+            pattern: ^/
+            security: false
+
+    # Note: Only the *first* matching rule is applied
+    access_control:
+        - { path: ^/admin/, roles: ROLE_ADMIN }
