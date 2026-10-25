@@ -11,8 +11,23 @@ Next.js 16 różni się od wcześniejszych wersji (API, konwencje, struktura pli
 ## Zakres i granice
 
 - Sklep to interfejs. Logika biznesowa (ceny, dostępność, koszyk, zamówienia, płatności) jest wyłącznie w backendzie; sklep jej nie duplikuje.
-- Nie implementuj katalogu, koszyka ani logowania, dopóki etap tego nie obejmuje.
-- Typy i klient API pochodzą docelowo z kontraktu OpenAPI (`packages/sdk`, etap 5). Nie twórz ręcznych duplikatów DTO backendu.
+- Katalog (strona główna, kategorie, listy i strony produktów) działa na danych demonstracyjnych ([ADR-0006](../../docs/adr/0006-store-catalog-ui.md)). Nie implementuj koszyka, checkoutu, płatności ani logowania, dopóki etap tego nie obejmuje.
+- Typy i klient API pochodzą docelowo z kontraktu OpenAPI (`packages/sdk`, etap 5). Do tego czasu jedyną kopią kształtu danych katalogu są tymczasowe typy w `src/catalog/types.ts`; nie twórz kolejnych.
+
+## Dane katalogu
+
+- Komponenty i strony czytają katalog wyłącznie przez `catalog` z `src/catalog` (interfejs `CatalogSource`). O źródle danych decyduje tylko `src/catalog/index.ts`; nie importuj `src/catalog/demo` w UI.
+- Dane demonstracyjne muszą być oznaczone: komunikat w layoucie, `noindex`, SKU `DEMO-`. Ceny brutto i `inStock` zapisuj tak, jak zwróci je backend; nie licz VAT ani dostępności.
+- Kwoty to stringi dziesiętne (`"129.00"`); formatuj je przez `formatMoney`, bez arytmetyki na liczbach zmiennoprzecinkowych.
+- `STORE_DEMO_DELAY_MS` (opcjonalnie, po stronie serwera) dodaje opóźnienie do źródła demo, żeby obejrzeć stany ładowania.
+- Zdjęcia demo: Unsplash (licencja Unsplash), przez URL i loader `src/lib/image-loader.ts`; bez widocznych logotypów marek, z linkiem do źródła.
+
+## UI
+
+- Tailwind CSS v4 (tokeny w `src/app/globals.css`), komponenty shadcn/ui w `src/components/ui` (dodawaj tylko używane; `components.json` dla CLI), ikony Lucide React.
+- Sortowanie i paginacja to linki z parametrami `sortowanie` i `strona` (`src/catalog/query.ts`); domyślne wartości nie trafiają do URL.
+- Strona kategorii i produktu wczytuje encję przed streamingiem (status 404 dla nieznanego sluga); nie dodawaj tam `loading.tsx`, tylko `Suspense` wokół list.
+- Strona główna musi zawierać dokładnie `<h1>Sklep</h1>` (sprawdzają to `infra/scripts/check-prod-*.sh`).
 
 ## Renderowanie i pobieranie danych
 
