@@ -1,0 +1,658 @@
+openapi: 3.1.0
+info:
+  title: E-commerce API
+  version: 0.1.0
+  description: |
+    Shared contract of the backend (apps/backend) for the store and the admin panel.
+
+    **Addresses.** The public address of every operation is the server URL plus the
+    path, e.g. `GET /api/catalog/products`. Clients always use the `/api` prefix
+    (same origin as the frontend). The reverse proxy (Vite/Next.js dev proxies,
+    later the central Caddy edge) removes `/api` before passing the request to
+    Symfony, whose routes therefore have no prefix (`/catalog/products`).
+    Relative `Location` headers (e.g. `products/{id}`) resolve correctly against
+    the public request URL.
+
+    **Access.**
+    - `/catalog/...`: public and read-only; only active products are visible.
+    - `/admin/...`: every operation requires the administrator bearer token;
+      they include inactive products and stock quantities. The token is an
+      INTERIM solution (ADR-0005) for tests and server-side calls only: it must
+      never be used in browser code. Before the admin panel uses this API it gets
+      proper login with HttpOnly session cookies and CSRF protection.
+
+    **Money.** Decimal strings with exactly two fractional digits, currency always
+    `PLN`. Calculated in grosze (integers): `gross = round_half_up(net × (1 + VAT))`
+    is the only rounding (docs/specs/01-placing-order.md, section 3.4).
+
+    **Errors.** RFC 9457 `application/problem+json`; validation errors add `violations`.
+servers:
+  - url: /api
+    description: Public address (same origin as the store and the admin panel)
+
+tags:
+  - name: Catalog (public)
+  - name: Catalog (admin)
+  - name: Inventory (admin)
+
+paths:
+  # ——— Public ————————————————————————————————————————————————————————————
+  /catalog/products:
+    get:
+      tags: [Catalog (public)]
+      operationId: listProducts
+      summary: List active products
+      parameters:
+        - name: category
+          in: query
+          description: Category slug; only products assigned to it (an unknown slug gives an empty list).
+          schema: { $ref: '#/components/schemas/Slug' }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+        - name: sort
+          in: query
+          description: "`price`/`-price`: by gross price, ascending/descending; `newest`: by creation date."
+          schema:
+            type: string
+            enum: [name, price, -price, newest]
+            default: name
+      responses:
+        '200':
+          description: One page of active products
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Pagination'
+                  - type: object
+                    required: [items]
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/PublicProduct' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /catalog/products/{slug}:
+    get:
+      tags: [Catalog (public)]
+      operationId: getProduct
+      summary: Get an active product by slug
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/Slug' }
+      responses:
+        '200':
+          description: The product
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicProduct' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /catalog/categories:
+    get:
+      tags: [Catalog (public)]
+      operationId: listCategories
+      summary: List all categories, ordered by name
+      responses:
+        '200':
+          description: All categories (flat list)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/PublicCategory' }
+
+  /catalog/categories/{slug}:
+    get:
+      tags: [Catalog (public)]
+      operationId: getCategory
+      summary: Get a category by slug
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/Slug' }
+      responses:
+        '200':
+          description: The category
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicCategory' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ——— Admin: products ———————————————————————————————————————————————————
+  /admin/catalog/products:
+    get:
+      tags: [Catalog (admin)]
+      operationId: adminListProducts
+      summary: List products, including inactive ones
+      security: [{ adminToken: [] }]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [all, active, inactive], default: all }
+        - name: category
+          in: query
+          description: Category id.
+          schema: { $ref: '#/components/schemas/Uuid' }
+        - name: q
+          in: query
+          description: Case-insensitive substring of the name or SKU.
+          schema: { type: string, minLength: 1, maxLength: 100 }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: One page of products, newest first
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Pagination'
+                  - type: object
+                    required: [items]
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/AdminProduct' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+    post:
+      tags: [Catalog (admin)]
+      operationId: adminCreateProduct
+      summary: Create a product (created inactive)
+      security: [{ adminToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProductRequest' }
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location:
+              schema: { type: string }
+              example: /admin/catalog/products/0192f0c4-7c2a-7c51-9b1e-2f3c4d5e6f70
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminProduct' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /admin/catalog/products/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Catalog (admin)]
+      operationId: adminGetProduct
+      summary: Get a product
+      security: [{ adminToken: [] }]
+      responses:
+        '200':
+          description: The product
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminProduct' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Catalog (admin)]
+      operationId: adminUpdateProduct
+      summary: Replace the editable fields of a product (SKU and status are not editable here)
+      security: [{ adminToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProductRequest' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminProduct' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /admin/catalog/products/{id}/activate:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      tags: [Catalog (admin)]
+      operationId: adminActivateProduct
+      summary: Put the product on sale (idempotent)
+      security: [{ adminToken: [] }]
+      responses:
+        '200':
+          description: The product, now active
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminProduct' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/catalog/products/{id}/deactivate:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      tags: [Catalog (admin)]
+      operationId: adminDeactivateProduct
+      summary: Withdraw the product from sale (idempotent; spec R6)
+      security: [{ adminToken: [] }]
+      responses:
+        '200':
+          description: The product, now inactive
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminProduct' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ——— Admin: categories —————————————————————————————————————————————————
+  /admin/catalog/categories:
+    get:
+      tags: [Catalog (admin)]
+      operationId: adminListCategories
+      summary: List all categories with product counts
+      security: [{ adminToken: [] }]
+      responses:
+        '200':
+          description: All categories, ordered by name
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AdminCategory' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Catalog (admin)]
+      operationId: adminCreateCategory
+      summary: Create a category
+      security: [{ adminToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CategoryRequest' }
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminCategory' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /admin/catalog/categories/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Catalog (admin)]
+      operationId: adminGetCategory
+      summary: Get a category
+      security: [{ adminToken: [] }]
+      responses:
+        '200':
+          description: The category
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminCategory' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Catalog (admin)]
+      operationId: adminUpdateCategory
+      summary: Rename a category or change its slug
+      security: [{ adminToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CategoryRequest' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminCategory' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+    delete:
+      tags: [Catalog (admin)]
+      operationId: adminDeleteCategory
+      summary: Delete a category that has no products
+      security: [{ adminToken: [] }]
+      responses:
+        '204': { description: Deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ——— Admin: stock (Inventory module) ———————————————————————————————————
+  /admin/inventory/stock/{productId}:
+    parameters:
+      - name: productId
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/Uuid' }
+    get:
+      tags: [Inventory (admin)]
+      operationId: adminGetStock
+      summary: Get the stock of a product (0 if never set)
+      security: [{ adminToken: [] }]
+      responses:
+        '200':
+          description: Stock level
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StockLevel' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Inventory (admin)]
+      operationId: adminSetStock
+      summary: Set the quantity on hand of a product
+      security: [{ adminToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [onHand]
+              properties:
+                onHand: { type: integer, minimum: 0, maximum: 1000000, description: Units counted in the warehouse. }
+      responses:
+        '200':
+          description: Stock level after the change
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StockLevel' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+components:
+  securitySchemes:
+    adminToken:
+      type: http
+      scheme: bearer
+      description: |
+        INTERIM administrator token (ADR-0005), configured on the server as the
+        `ADMIN_API_TOKEN` secret. Tests and server-side calls only, never in a
+        browser. Replaced by admin login with HttpOnly session cookies and CSRF
+        protection before the admin panel uses the API.
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Uuid' }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PerPage:
+      name: perPage
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+
+  responses:
+    NotFound:
+      description: Not found (for public endpoints also an inactive product)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Forbidden:
+      description: Authenticated, but without the administrator role
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Unauthorized:
+      description: Missing or invalid bearer token, or no token configured on the server
+      headers:
+        WWW-Authenticate:
+          schema: { type: string }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Conflict:
+      description: Business rule conflict (duplicate SKU or slug, category still has products)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    ValidationFailed:
+      description: Invalid request data (format, ranges, unknown category, VAT rate outside 23/8/5/0)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ValidationProblem' }
+
+  schemas:
+    Uuid:
+      type: string
+      format: uuid
+    Slug:
+      type: string
+      pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$'
+      minLength: 1
+      maxLength: 120
+    Sku:
+      type: string
+      description: Stock keeping unit; uppercase letters, digits, `-` and `_`. Immutable after creation.
+      pattern: '^[A-Z0-9][A-Z0-9_-]{0,63}$'
+    VatRate:
+      type: integer
+      description: VAT rate in percent (spec R12).
+      enum: [23, 8, 5, 0]
+    Amount:
+      type: string
+      description: Decimal amount in PLN with exactly two fractional digits.
+      pattern: '^(0|[1-9]\d{0,8})\.\d{2}$'
+      examples: ['10.00']
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount: { $ref: '#/components/schemas/Amount' }
+        currency: { type: string, const: PLN }
+
+    PublicPrice:
+      type: object
+      description: Price presented to B2C customers (spec R13).
+      required: [gross, vatRate]
+      properties:
+        gross: { $ref: '#/components/schemas/Money' }
+        vatRate: { $ref: '#/components/schemas/VatRate' }
+    AdminPrice:
+      type: object
+      required: [net, vatRate, gross]
+      properties:
+        net: { $ref: '#/components/schemas/Money' }
+        vatRate: { $ref: '#/components/schemas/VatRate' }
+        gross: { $ref: '#/components/schemas/Money' }
+
+    CategoryRef:
+      type: object
+      required: [id, slug, name]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        slug: { $ref: '#/components/schemas/Slug' }
+        name: { type: string }
+
+    PublicProduct:
+      type: object
+      required: [id, sku, slug, name, description, price, category, inStock]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        sku: { $ref: '#/components/schemas/Sku' }
+        slug: { $ref: '#/components/schemas/Slug' }
+        name: { type: string }
+        description: { type: [string, 'null'] }
+        price: { $ref: '#/components/schemas/PublicPrice' }
+        category:
+          oneOf:
+            - $ref: '#/components/schemas/CategoryRef'
+            - type: 'null'
+        inStock:
+          type: boolean
+          description: Whether at least one unit is available for sale (quantities are not disclosed publicly).
+    AdminProduct:
+      type: object
+      required: [id, sku, slug, name, description, price, category, active, stock, createdAt, updatedAt]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        sku: { $ref: '#/components/schemas/Sku' }
+        slug: { $ref: '#/components/schemas/Slug' }
+        name: { type: string }
+        description: { type: [string, 'null'] }
+        price: { $ref: '#/components/schemas/AdminPrice' }
+        category:
+          oneOf:
+            - $ref: '#/components/schemas/CategoryRef'
+            - type: 'null'
+        active: { type: boolean }
+        stock: { $ref: '#/components/schemas/Stock' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    CreateProductRequest:
+      type: object
+      required: [sku, slug, name, netPrice, vatRate]
+      properties:
+        sku: { $ref: '#/components/schemas/Sku' }
+        slug: { $ref: '#/components/schemas/Slug' }
+        name: { type: string, minLength: 1, maxLength: 200, description: Trimmed. }
+        description: { type: [string, 'null'], maxLength: 10000, description: Trimmed; blank becomes null. }
+        netPrice:
+          type: string
+          description: Unit net price in PLN, from 0.01 to 9999999.99 (spec R11).
+          pattern: '^(0|[1-9]\d{0,6})\.\d{2}$'
+          examples: ['8.13']
+        vatRate: { $ref: '#/components/schemas/VatRate' }
+        categoryId:
+          description: An existing category, or null.
+          oneOf:
+            - $ref: '#/components/schemas/Uuid'
+            - type: 'null'
+    UpdateProductRequest:
+      type: object
+      description: Full replacement of the editable fields; omitted optional fields become null. `sku` must not be sent.
+      required: [slug, name, netPrice, vatRate]
+      properties:
+        slug: { $ref: '#/components/schemas/Slug' }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: [string, 'null'], maxLength: 10000 }
+        netPrice: { $ref: '#/components/schemas/CreateProductRequest/properties/netPrice' }
+        vatRate: { $ref: '#/components/schemas/VatRate' }
+        categoryId:
+          oneOf:
+            - $ref: '#/components/schemas/Uuid'
+            - type: 'null'
+
+    PublicCategory:
+      type: object
+      required: [id, slug, name]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        slug: { $ref: '#/components/schemas/Slug' }
+        name: { type: string }
+    AdminCategory:
+      type: object
+      required: [id, slug, name, productCount]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        slug: { $ref: '#/components/schemas/Slug' }
+        name: { type: string }
+        productCount: { type: integer, minimum: 0 }
+    CategoryRequest:
+      type: object
+      required: [slug, name]
+      properties:
+        slug: { $ref: '#/components/schemas/Slug' }
+        name: { type: string, minLength: 1, maxLength: 100 }
+
+    Stock:
+      type: object
+      description: |
+        Units on hand, held by reservations (from Milestone 4; always 0 now) and
+        available for sale: available = onHand - reserved.
+      required: [onHand, reserved, available]
+      properties:
+        onHand: { type: integer, minimum: 0 }
+        reserved: { type: integer, minimum: 0 }
+        available: { type: integer, minimum: 0 }
+    StockLevel:
+      allOf:
+        - type: object
+          required: [productId]
+          properties:
+            productId: { $ref: '#/components/schemas/Uuid' }
+        - $ref: '#/components/schemas/Stock'
+
+    Pagination:
+      type: object
+      required: [page, perPage, totalItems, totalPages]
+      properties:
+        page: { type: integer, minimum: 1 }
+        perPage: { type: integer, minimum: 1, maximum: 100 }
+        totalItems: { type: integer, minimum: 0 }
+        totalPages: { type: integer, minimum: 0 }
+
+    Problem:
+      type: object
+      description: RFC 9457 problem details.
+      required: [type, title, status]
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+    ValidationProblem:
+      allOf:
+        - $ref: '#/components/schemas/Problem'
+        - type: object
+          required: [violations]
+          properties:
+            violations:
+              type: array
+              items:
+                type: object
+                description: '`propertyPath` is the request field (or query parameter).'
+                required: [propertyPath, title]
+                properties:
+                  propertyPath: { type: string }
+                  title: { type: string }
