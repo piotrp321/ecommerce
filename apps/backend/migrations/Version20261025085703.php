@@ -40,18 +40,27 @@ final class Version20261025085703 extends AbstractMigration
 
         // The category tree must stay acyclic and at most 10 levels deep
         // (CategoryPlacement::MAX_DEPTH) even when changes run at the same time:
-        // each would pass the application check on its own. The advisory lock
-        // serialises changes of parent_id; in READ COMMITTED (the default, which
-        // this relies on) every query of this function then sees the changes
-        // committed before it. Moves to the root level need no check.
+        // each would pass the application check on its own.
+        // - The advisory lock serialises changes of parent_id. In READ COMMITTED
+        //   every query of this function then sees the changes committed before it;
+        //   other isolation levels would read an older snapshot, so they are refused.
+        // - Every recursion detects cycles (UNION over the edges, or CYCLE), so even
+        //   an already broken tree (e.g. restored with triggers disabled) makes the
+        //   write fail at once instead of looping while holding the lock.
+        // Moves to the root level cannot create a cycle or deepen the tree.
         $this->addSql(<<<'SQL'
             CREATE FUNCTION catalog_category_tree_guard() RETURNS trigger LANGUAGE plpgsql AS $$
             DECLARE
                 parent_level integer;
                 subtree_height integer;
+                broken boolean;
             BEGIN
                 IF NEW.parent_id IS NULL THEN
                     RETURN NEW;
+                END IF;
+                IF current_setting('transaction_isolation') <> 'read committed' THEN
+                    RAISE EXCEPTION 'catalog_category_tree_guard requires READ COMMITTED, not %', current_setting('transaction_isolation')
+                        USING ERRCODE = 'serialization_failure';
                 END IF;
                 PERFORM pg_advisory_xact_lock(hashtext('catalog_category_tree'));
 
@@ -67,20 +76,29 @@ final class Version20261025085703 extends AbstractMigration
                         USING ERRCODE = 'check_violation';
                 END IF;
 
-                -- No cycle from here on, so the recursions below terminate.
                 WITH RECURSIVE ancestors(id, parent_id) AS (
                     SELECT id, parent_id FROM catalog_category WHERE id = NEW.parent_id
                     UNION ALL
                     SELECT c.id, c.parent_id FROM catalog_category c JOIN ancestors a ON c.id = a.parent_id
-                )
-                SELECT count(*) INTO parent_level FROM ancestors;
+                ) CYCLE id SET is_cycle USING path
+                SELECT count(*) FILTER (WHERE NOT is_cycle), COALESCE(bool_or(is_cycle), false)
+                INTO parent_level, broken FROM ancestors;
+                IF broken THEN
+                    RAISE EXCEPTION 'catalog_category_cycle: the ancestors of % already form a cycle', NEW.parent_id
+                        USING ERRCODE = 'check_violation';
+                END IF;
 
                 WITH RECURSIVE subtree(id, level) AS (
                     SELECT c.id, 1 FROM catalog_category c WHERE c.parent_id = NEW.id
                     UNION ALL
                     SELECT c.id, s.level + 1 FROM catalog_category c JOIN subtree s ON c.parent_id = s.id
-                )
-                SELECT COALESCE(max(level), 0) INTO subtree_height FROM subtree;
+                ) CYCLE id SET is_cycle USING path
+                SELECT COALESCE(max(level) FILTER (WHERE NOT is_cycle), 0), COALESCE(bool_or(is_cycle), false)
+                INTO subtree_height, broken FROM subtree;
+                IF broken THEN
+                    RAISE EXCEPTION 'catalog_category_cycle: the subcategories of % already form a cycle', NEW.id
+                        USING ERRCODE = 'check_violation';
+                END IF;
 
                 IF parent_level + 1 + subtree_height > 10 THEN
                     RAISE EXCEPTION 'catalog_category_too_deep: category % under % would exceed 10 levels', NEW.id, NEW.parent_id

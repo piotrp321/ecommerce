@@ -28,6 +28,7 @@ final readonly class DoctrineCategoryRepository implements CategoryRepository
     /** Raised by the catalog_category_tree_guard trigger (see the migration). */
     private const string CYCLE_ERROR = 'catalog_category_cycle';
     private const string TOO_DEEP_ERROR = 'catalog_category_too_deep';
+    private const string ISOLATION_ERROR = 'catalog_category_tree_guard requires READ COMMITTED';
 
     public function __construct(private EntityManagerInterface $entityManager)
     {
@@ -127,6 +128,10 @@ final readonly class DoctrineCategoryRepository implements CategoryRepository
             }
             if (null !== $parentId && str_contains($exception->getMessage(), self::TOO_DEEP_ERROR)) {
                 throw CategoryTooDeep::under($parentId, CategoryPlacement::MAX_DEPTH);
+            }
+            if (str_contains($exception->getMessage(), self::ISOLATION_ERROR)) {
+                // A configuration error of the server, not of the request.
+                throw new \LogicException('Category tree changes must run in READ COMMITTED transactions.', 0, $exception);
             }
             throw $exception;
         }
