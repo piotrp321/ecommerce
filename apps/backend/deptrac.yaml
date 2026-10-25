@@ -112,6 +112,10 @@ deptrac:
     Catalog_Infrastructure:
       - Catalog_Domain
       - Catalog_Application
+      # Adapters between the modules (src/Catalog/Infrastructure/Inventory):
+      # Catalog's availability port uses Inventory's StockLevels, and Catalog
+      # implements Inventory's KnownProducts port. Inventory does not depend on Catalog.
+      - Inventory_Application
       - Shared_Domain
       - Shared_Application
       - Shared_Infrastructure

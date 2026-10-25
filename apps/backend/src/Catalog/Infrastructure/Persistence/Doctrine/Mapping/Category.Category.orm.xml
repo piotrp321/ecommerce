@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<doctrine-mapping xmlns="http://doctrine-project.org/schemas/orm/doctrine-mapping"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  xsi:schemaLocation="http://doctrine-project.org/schemas/orm/doctrine-mapping
+                  https://www.doctrine-project.org/schemas/orm/doctrine-mapping.xsd">
+    <entity name="App\Catalog\Domain\Category\Category" table="catalog_category">
+        <unique-constraints>
+            <unique-constraint name="catalog_category_slug_key" columns="slug"/>
+        </unique-constraints>
+
+        <id name="id" type="catalog_category_id"/>
+        <field name="slug" type="catalog_slug" length="120"/>
+        <field name="name" type="string" length="100"/>
+    </entity>
+</doctrine-mapping>

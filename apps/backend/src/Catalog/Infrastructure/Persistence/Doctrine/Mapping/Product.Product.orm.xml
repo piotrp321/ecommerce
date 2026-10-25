@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<doctrine-mapping xmlns="http://doctrine-project.org/schemas/orm/doctrine-mapping"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  xsi:schemaLocation="http://doctrine-project.org/schemas/orm/doctrine-mapping
+                  https://www.doctrine-project.org/schemas/orm/doctrine-mapping.xsd">
+    <!-- The category is referenced by id (separate aggregate); its foreign key is added by CatalogSchemaListener. -->
+    <entity name="App\Catalog\Domain\Product\Product" table="catalog_product">
+        <indexes>
+            <index name="catalog_product_category_id_idx" columns="category_id"/>
+        </indexes>
+        <unique-constraints>
+            <unique-constraint name="catalog_product_sku_key" columns="sku"/>
+            <unique-constraint name="catalog_product_slug_key" columns="slug"/>
+        </unique-constraints>
+
+        <id name="id" type="catalog_product_id"/>
+        <field name="sku" type="catalog_sku" length="64"/>
+        <field name="slug" type="catalog_slug" length="120"/>
+        <field name="name" type="string" length="200"/>
+        <field name="description" type="text" nullable="true"/>
+        <field name="netPrice" column="net_price" type="money"/>
+        <field name="vatRate" column="vat_rate" type="smallint" enum-type="App\Shared\Domain\Pricing\VatRate"/>
+        <field name="categoryId" column="category_id" type="catalog_category_id" nullable="true"/>
+        <field name="active" type="boolean"/>
+        <field name="createdAt" column="created_at" type="datetimetz_immutable"/>
+        <field name="updatedAt" column="updated_at" type="datetimetz_immutable"/>
+    </entity>
+</doctrine-mapping>
