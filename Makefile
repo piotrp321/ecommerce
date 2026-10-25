@@ -1,6 +1,7 @@
 # Monorepo commands. Convention:
 # - aggregate targets without a prefix (bootstrap, up, check, check-prod...),
-# - per-application targets prefixed with the app name (backend-*; later store-*, admin-*).
+# - per-application targets prefixed with the app name (backend-*, admin-*; later store-*),
+# - pnpm workspace targets prefixed with pnpm-.
 # None of the targets removes volumes or data.
 
 DOCKER_COMP = docker compose
@@ -8,18 +9,23 @@ BACKEND     = $(DOCKER_COMP) exec backend
 PHP         = $(BACKEND) php
 COMPOSER    = $(BACKEND) composer
 SYMFONY     = $(PHP) bin/console
+# One-off container with the workspace bind mount and the node_modules volumes;
+# works whether or not the admin dev server is running.
+PNPM        = $(DOCKER_COMP) run --rm --no-deps admin pnpm
 
 .DEFAULT_GOAL = help
 .PHONY: help bootstrap build up down logs install check build-prod check-prod \
+	pnpm-install pnpm \
 	backend-sh backend-install backend-composer backend-console backend-migrate backend-db-test \
-	backend-test backend-stan backend-arch backend-check backend-build-prod backend-check-prod
+	backend-test backend-stan backend-arch backend-check backend-build-prod backend-check-prod \
+	admin-lint admin-typecheck admin-test admin-build admin-check admin-build-prod admin-check-prod
 
 ## —— Help ———————————————————————————————————————————————————————————————————
 help: ## List available targets
 	@grep -E '(^[a-zA-Z0-9_-]+:.*?##.*$$)|(^##)' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}{printf "\033[32m%-20s\033[0m %s\n", $$1, $$2}' | sed -e 's/\[32m##/[33m/'
 
 ## —— Monorepo ———————————————————————————————————————————————————————————————
-bootstrap: build up install backend-migrate ## Set up the dev environment from a fresh clone
+bootstrap: build pnpm-install up backend-install backend-migrate ## Set up the dev environment from a fresh clone
 
 build: ## Build the dev images
 	@$(DOCKER_COMP) build --pull
@@ -33,13 +39,20 @@ down: ## Stop and remove the dev containers (volumes are kept)
 logs: ## Follow the container logs
 	@$(DOCKER_COMP) logs --tail=100 --follow
 
-install: backend-install ## Install the dependencies of all applications (dev)
+install: pnpm-install backend-install ## Install the dependencies of all applications (dev; backend needs `make up`)
 
-check: backend-check ## Run all quality gates (required before every commit)
+check: backend-check admin-check ## Run all quality gates (required before every commit)
 
-build-prod: backend-build-prod ## Build all production images
+build-prod: backend-build-prod admin-build-prod ## Build all production images
 
-check-prod: backend-check-prod ## Check all production images in an ephemeral project (ports 8080/8443)
+check-prod: backend-check-prod admin-check-prod ## Check all production images (backend 8080/8443, admin 8081)
+
+## —— pnpm workspace (JavaScript apps) ———————————————————————————————————————
+pnpm-install: ## Install the workspace dependencies into the container volumes (frozen lockfile)
+	@$(PNPM) install --frozen-lockfile
+
+pnpm: ## Run pnpm in the container, e.g. make pnpm c="--filter admin add zod"
+	@$(PNPM) $(c)
 
 ## —— Backend (apps/backend, Symfony) ———————————————————————————————————————
 backend-sh: ## Open a shell in the backend container
@@ -86,4 +99,25 @@ backend-build-prod: ## Build the backend production image (dependencies installe
 	@docker build --pull --file infra/docker/backend/Dockerfile --target frankenphp_prod --tag $(IMAGES_PREFIX)ecommerce-backend .
 
 backend-check-prod: backend-build-prod ## Run the backend prod image in an ephemeral project and check it
-	@./infra/scripts/check-prod.sh
+	@./infra/scripts/check-prod-backend.sh
+
+## —— Admin (apps/admin, React + Vite) ——————————————————————————————————————
+admin-lint: ## Run ESLint
+	@$(PNPM) --filter admin lint
+
+admin-typecheck: ## Run the TypeScript type check
+	@$(PNPM) --filter admin typecheck
+
+admin-test: ## Run Vitest
+	@$(PNPM) --filter admin test
+
+admin-build: ## Build the static files (Vite production build)
+	@$(PNPM) --filter admin build
+
+admin-check: admin-lint admin-typecheck admin-test admin-build ## Run all admin quality gates
+
+admin-build-prod: ## Build the admin production image (static files served by unprivileged Caddy)
+	@docker build --pull --file infra/docker/admin/Dockerfile --target admin_prod --tag $(IMAGES_PREFIX)ecommerce-admin .
+
+admin-check-prod: admin-build-prod ## Run the admin prod image on 127.0.0.1:8081 and check it
+	@./infra/scripts/check-prod-admin.sh
