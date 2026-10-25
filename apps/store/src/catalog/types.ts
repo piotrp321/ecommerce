@@ -1,7 +1,7 @@
 // Catalog data as the store presents it.
 //
-// INTERIM: these types follow the preliminary public catalog contract
-// (docs/api/openapi.yaml on feature/catalog-backend: PublicProduct, PublicCategoryNode,
+// INTERIM: these types follow the public catalog contract
+// (docs/api/openapi.yaml, ADR-0005: PublicProduct, PublicCategoryNode,
 // PublicCategoryDetails, Pagination). They are replaced by the types generated from
 // OpenAPI in packages/sdk (roadmap stage 5). Keep them structurally identical to the
 // contract; the only store-side addition is `image`, which the contract does not have yet.

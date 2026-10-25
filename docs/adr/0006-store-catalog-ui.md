@@ -7,13 +7,11 @@
 
 The store ([ADR-0003](0003-store-nextjs.md)) gets its first real interface: a home page, a category tree, product listings (filtered by a category and its subcategories, sorted, paginated) and product pages. Constraints:
 
-- The catalog API (Milestone 2, `feature/catalog-backend`) is still in review. Its OpenAPI contract is preliminary, and `packages/sdk` with generated types comes only in stage 5.
+- The catalog API (Milestone 2, [ADR-0005](0005-catalog-inventory-and-admin-api-access.md)) is described by [`docs/api/openapi.yaml`](../api/openapi.yaml). The store is not connected to it yet, and `packages/sdk` with generated types comes only in stage 5.
 - Prices, VAT and availability are business logic of the backend; the store only presents them.
 - The UI should look like a modern e-commerce store and use technology common in React/Next.js projects, without large dependencies.
 - Demo data must not pass for a real catalog.
 - The production image serves `.next/standalone` and `.next/static` only (no `public/`), and `infra/` is not changed by this work.
-
-(ADR-0005 is reserved by the catalog backend branch.)
 
 ## Decision
 
@@ -26,7 +24,7 @@ The store ([ADR-0003](0003-store-nextjs.md)) gets its first real interface: a ho
 2. **Rendering.**
    - Server Components everywhere; client components only for the category sheet (Radix dialog) and the error boundaries.
    - Sorting and pagination are links with query parameters (`?sortowanie=cena-rosnaco&strona=2`): they work without JavaScript and every listing state has its own URL. Default values are omitted, so each page has one canonical URL.
-   - Category and product pages load the entity before anything streams, so an unknown slug answers HTTP 404. Only the product results (and related products) stream in behind skeletons. `loading.tsx` is used only for `/produkty`, where no 404 is possible.
+   - Category and product pages load the entity before anything streams, so an unknown slug answers HTTP 404. Only the product results (and related products) stream in behind skeletons. `loading.tsx` is used only for `/produkty`, where no 404 is possible. Listing pages past the last one get `noindex` and no canonical URL.
    - Root `error.tsx` and `global-error.tsx` (the root layout loads the category tree).
 
 3. **Data source behind an interface.**
@@ -43,7 +41,7 @@ The store ([ADR-0003](0003-store-nextjs.md)) gets its first real interface: a ho
 
 - Connecting the API means adding an HTTP `CatalogSource` (backend address in a runtime server-side variable) and switching `src/catalog/index.ts`; the UI stays unchanged.
 - The root layout reads the category tree, and Next.js prerenders `/_not-found` at build time. With the HTTP source, that read must not require the backend during `next build` (render the 404 page dynamically or tolerate a missing tree).
-- **Proposals for the backend contract** (not changed here): product and category images; optionally a featured/merchandising flag instead of the store's own list in `src/content/home.ts`.
+- **Proposals for the backend contract** (not changed here): product and category images; optionally a featured/merchandising flag instead of the store's own list in `src/content/home.ts`. Until then, `src/content/load-home.ts` skips picks the catalog does not have, falls back to the first products by name and hides the banner when its category is missing.
 - Images depend on an external CDN. A future CSP has to allow `images.unsplash.com`, or the photos move to the store's own storage.
 - The canonical URLs are relative until the store knows its public URL (`metadataBase`), which comes with the production domain configuration.
 - New dependencies change the shared `pnpm-lock.yaml`. Conflicts with parallel work on `apps/admin` are resolved by taking the other branch's lockfile and running `pnpm install` again, not by editing the file by hand.
