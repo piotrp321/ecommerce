@@ -40,10 +40,17 @@ expect_health() {
 }
 container_ids() { compose ps -q edge backend store admin database | sort | tr '\n' ' '; }
 cid() { compose ps -q "$1"; }
+# fetch never fails (curl errors end in `|| true`), so an early `grep -q` exit cannot fail
+# these pipes under pipefail.
+store_home_ok() { fetch "$STORE_DOMAIN" / | grep -q '<h1>Sklep</h1>'; }
 routes_ok() {
-	fetch "$STORE_DOMAIN" / | grep -q '<h1>Sklep</h1>' \
+	store_home_ok \
 		&& fetch "$ADMIN_DOMAIN" / | grep -q '<div id="root"></div>' \
 		&& [ "$(status "$ADMIN_DOMAIN" /api/health)" = "200" ]
+}
+# Status codes of the routes checked by routes_ok, for failure messages (no secrets).
+routes_status() {
+	echo "store / $(status "$STORE_DOMAIN" /), admin / $(status "$ADMIN_DOMAIN" /), /api/health $(status "$ADMIN_DOMAIN" /api/health)"
 }
 
 echo "== Configuration is required at runtime"
@@ -134,6 +141,18 @@ for _ in $(seq 1 20); do
 	sleep 1
 done
 expect_health 200 "database recovered"
+# The check database lives on a tmpfs (compose.prod-check.yaml), which Docker empties when
+# the container stops: the restarted PostgreSQL is a fresh, empty cluster. The store renders
+# the catalog from the backend (ADR-0009), so the schema is recreated before its pages are
+# checked again.
+compose exec -T backend php bin/console doctrine:migrations:migrate --no-interaction --allow-no-migration >/dev/null 2>&1 \
+	&& pass "schema recreated after the database restart (tmpfs storage)" || fail "migrations after the database restart failed"
+for _ in $(seq 1 20); do
+	store_home_ok && break
+	sleep 1
+done
+store_home_ok && pass "store home page works again after the database restart (<h1>Sklep</h1>)" \
+	|| fail "store home page after the database restart (HTTP $(status "$STORE_DOMAIN" /))"
 if compose logs 2>&1 | grep -qF "$POSTGRES_PASSWORD"; then
 	fail "database password found in logs"
 else
@@ -163,7 +182,7 @@ for _ in $(seq 1 60); do
 	routes_ok && break
 	sleep 1
 done
-routes_ok && pass "backend restarted: store pages work again" || fail "store pages after the backend restart"
+routes_ok && pass "backend restarted: store pages work again" || fail "store pages after the backend restart ($(routes_status))"
 
 echo "== Independent redeployment"
 for svc in store admin backend edge; do
@@ -178,7 +197,7 @@ for svc in store admin backend edge; do
 	[ "$others_unchanged" = "$now_others" ] || ok=0
 	for _ in $(seq 1 30); do routes_ok && break; sleep 1; done
 	routes_ok || ok=0
-	[ "$ok" = 1 ] && pass "${svc} redeployed alone: other containers untouched, all routes work" || fail "independent redeployment of ${svc}"
+	[ "$ok" = 1 ] && pass "${svc} redeployed alone: other containers untouched, all routes work" || fail "independent redeployment of ${svc} ($(routes_status))"
 done
 
 echo
