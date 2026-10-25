@@ -23,6 +23,7 @@ Edukacyjny system e-commerce rozwijany jako monorepo. Projekt służy do nauki A
 - `infra/scripts/`: skrypty kontroli prod (`check-prod-admin.sh`, `check-prod-store.sh`, `check-prod-stack.sh` dla całej topologii)
 - `docs/`: specyfikacje, roadmapa, ADR
 - katalog główny: `compose.yaml` (wspólny, projekt dev `ecommerce`), `compose.override.yaml` (dev, porty tylko na localhost), `compose.prod.yaml` (osobny projekt `ecommerce-prod`, edge + trzy aplikacje, wymagane sekrety i domeny), `Makefile`, pnpm workspace (`package.json`, `pnpm-workspace.yaml`, jeden `pnpm-lock.yaml`), `.node-version`, `AGENTS.md`, `README.md`
+- `.claude/`: wspólna konfiguracja Claude Code ([ADR-0008](docs/adr/0008-agentic-sdlc-claude-code.md)): skill `/feature-delivery` (`skills/`), subagenci `developer`, `code-reviewer`, `qa-tester` (`agents/`), reguły `ask` (`settings.json`); pozostałe pliki `.claude/` (np. `settings.local.json`, `worktrees/`) są lokalne i ignorowane
 
 Obrazy budujemy z kontekstu w katalogu głównym. Co trafia do obrazu, określa allowlista w `infra/docker/<app>/Dockerfile.dockerignore`.
 
@@ -62,7 +63,7 @@ Nie kopiuj ani nie montuj `node_modules` między hostem a kontenerem. Każdy pak
 - Publiczne porty ma wyłącznie `edge`. Nie publikuj portów backendu, sklepu, admina ani bazy w `compose.prod.yaml`.
 - Każda aplikacja i edge to osobny obraz, wdrażany niezależnie (`up -d --no-deps <usługa>`). Zmiana routingu = zmiana `infra/edge/Caddyfile` i nowy obraz edge.
 - Kontrakt routingu API: frontendy wołają `/api/...` na własnej domenie, edge przekazuje to do backendu bez prefiksu. Nowe endpointy backendu nie wymagają zmian w edge.
-- Pracując równolegle z innym agentem lub worktree, uruchamiaj Docker w izolowanym projekcie (`COMPOSE_PROJECT_NAME`, `IMAGES_PREFIX`, inne porty), żeby nie przejąć cudzych kontenerów.
+- Pracując równolegle z innym agentem lub worktree, uruchamiaj Docker w izolowanym projekcie (`COMPOSE_PROJECT_NAME`, `IMAGES_PREFIX`, inne porty), żeby nie przejąć cudzych kontenerów. Najprościej zapisać je w `.env` w katalogu głównym worktree (ignorowany przez git) i przed pierwszym poleceniem sprawdzić `docker compose config | head -1`. `make check-prod` używa stałego projektu `ecommerce-prod-check`: nie uruchamiaj go równolegle z inną sesją ani przy ustawionym `COMPOSE_PROJECT_NAME` (także z `.env`).
 
 ## Bezpieczeństwo operacji
 
