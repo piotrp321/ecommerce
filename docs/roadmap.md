@@ -19,8 +19,8 @@ Realizowana przed M2, jeden Pull Request na etap.
 
 | Etap | Zakres | Status |
 |---|---|---|
-| 1 | Symfony do `apps/backend`, obraz w `infra/docker/backend`, Makefile, Deptrac, CI | w trakcie |
-| 2 | pnpm workspace i `apps/admin` (React + Vite) | planowany |
+| 1 | Symfony do `apps/backend`, obraz w `infra/docker/backend`, Makefile, Deptrac, CI | zakończony |
+| 2 | pnpm workspace i `apps/admin` (React + Vite), dev lokalnie i w Dockerze, obraz prod ([ADR-0002](adr/0002-frontend-workspace-and-admin.md)) | w trakcie |
 | 3 | `apps/store` (Next.js) | planowany |
 | 4 | Topologia produkcyjna z centralnym edge Caddy | planowany |
 | 5 | Kontrakt OpenAPI, testy kontraktowe, `packages/sdk` (gdy pojawią się endpointy biznesowe) | planowany |

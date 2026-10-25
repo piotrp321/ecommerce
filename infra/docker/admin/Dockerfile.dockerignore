@@ -1,0 +1,19 @@
+# Build context of the admin image is the repository root; this file (next to
+# the Dockerfile, picked up by BuildKit) restricts it to an allowlist.
+# Other apps, local node_modules/dist (host binaries), .env files and tooling
+# such as .claude/ never reach the image. Add new paths here deliberately.
+*
+
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!apps/admin/
+!infra/docker/admin/
+
+apps/admin/node_modules/
+apps/admin/dist/
+apps/admin/coverage/
+apps/admin/.env*
+infra/docker/admin/Dockerfile*
+**/.DS_Store
+**/.gitignore

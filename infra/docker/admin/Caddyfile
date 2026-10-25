@@ -1,0 +1,31 @@
+# Static file server of the admin SPA (production image).
+# Plain HTTP on an unprivileged port: TLS, domains and the /api route are handled
+# by the central edge proxy. No admin API and no state on disk, so the container
+# can run as a non-root user with a read-only filesystem.
+{
+	admin off
+	auto_https off
+	persist_config off
+}
+
+:8080 {
+	root * /srv
+	encode zstd gzip
+
+	header {
+		-Server
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Robots-Tag "noindex, nofollow"
+	}
+
+	# Hashed build assets never change; index.html must always be revalidated.
+	@assets path /assets/*
+	header @assets Cache-Control "public, max-age=31536000, immutable"
+	header ?Cache-Control "no-cache"
+
+	# Client-side routing: unknown paths fall back to index.html.
+	try_files {path} /index.html
+	file_server
+}

@@ -14,19 +14,21 @@ Edukacyjny system e-commerce rozwijany jako monorepo. Projekt służy do nauki A
 | Katalog | Zawartość |
 |---|---|
 | `apps/backend` | Symfony 8.1, PHP 8.5, DDD + Hexagonal (modularny monolit) |
+| `apps/admin` | Panel administracyjny: React 19 + Vite 8 + TypeScript (SPA) |
 | `infra/docker/backend` | Obraz backendu (FrankenPHP): Dockerfile, Caddyfile, PHP ini, entrypoint prod |
-| `infra/scripts` | `check-prod.sh` i jego tymczasowy plik Compose |
+| `infra/docker/admin` | Obraz admina: Vite dev (HMR) i produkcyjny statyczny Caddy |
+| `infra/scripts` | `check-prod-backend.sh` (z tymczasowym plikiem Compose), `check-prod-admin.sh` |
 | `docs` | Specyfikacje, roadmapa, ADR |
-| katalog główny | `compose*.yaml`, `Makefile`, `AGENTS.md` |
+| katalog główny | `compose*.yaml`, `Makefile`, pnpm workspace (`package.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml`), `.node-version`, `AGENTS.md` |
 
-Aplikacje frontendowe (`apps/store`, `apps/admin`) i SDK (`packages/sdk`) powstaną w kolejnych etapach ([roadmapa](docs/roadmap.md)).
+Sklep (`apps/store`) i SDK (`packages/sdk`) powstaną w kolejnych etapach ([roadmapa](docs/roadmap.md)).
 
 ## Wymagania
 
 - Docker z Docker Compose v2.24+
 - GNU Make
 
-PHP i Composer na hoście nie są potrzebne: wszystkie komendy działają w kontenerze `backend`.
+PHP, Composer, Node.js i pnpm na hoście nie są potrzebne: wszystkie komendy działają w kontenerach. Opcjonalny tryb lokalny frontendu opisuje sekcja „Frontend lokalnie (macOS)”.
 
 ## Uruchomienie
 
@@ -34,11 +36,14 @@ PHP i Composer na hoście nie są potrzebne: wszystkie komendy działają w kont
 make bootstrap
 ```
 
-`make bootstrap` buduje obrazy dev, uruchamia PostgreSQL i backend, instaluje zależności i wykonuje migracje.
+`make bootstrap` buduje obrazy dev, instaluje zależności JS (do wolumenów Dockera), uruchamia PostgreSQL, backend i admina, instaluje zależności Composera i wykonuje migracje.
 
-Backend działa pod adresem https://localhost (certyfikat generowany lokalnie przez Caddy).
-W dev wszystkie porty (80, 443, 5432) są dostępne tylko z `127.0.0.1`.
-Stan aplikacji i bazy: https://localhost/health
+| Aplikacja | Adres |
+|---|---|
+| Backend | https://localhost (certyfikat generowany lokalnie przez Caddy), stan: https://localhost/health |
+| Admin (Vite, HMR) | http://localhost:5173, API przez proxy: http://localhost:5173/api/health |
+
+W dev wszystkie porty (80, 443, 5173, 5432) są dostępne tylko z `127.0.0.1`. Odpowiedź `/health`:
 
 ```json
 {"status":"ok","database":"ok"}
@@ -52,6 +57,21 @@ Po aktualizacji z wersji, w której Symfony było w katalogu głównym:
 2. Pliki ignorowane przez git nie przenoszą się same. Przenieś je do `apps/backend/`: `.env.local` (jeśli masz), a opcjonalnie też `vendor/` i `var/`. Możesz je też usunąć z katalogu głównego i wykonać `make install`.
 3. `make bootstrap`. Lokalna baza zostaje, bo nazwa projektu `ecommerce` i wolumen `ecommerce_database_data` się nie zmieniają.
 
+### Frontend lokalnie (macOS)
+
+Do pracy z IDE, debuggerem i natywnym HMR frontend można uruchomić bez Dockera. Backend nadal działa w Dockerze.
+
+```bash
+nvm install "$(cat .node-version)"   # albo fnm/mise, które czytają .node-version
+corepack enable pnpm                  # pnpm w wersji z packageManager
+pnpm install
+docker compose stop admin             # port 5173 zajmuje kontener admin
+pnpm dev:admin                        # http://localhost:5173, /api -> https://localhost
+```
+
+Lokalne `node_modules` (binarki macOS) i `node_modules` kontenera (binarki Linuksa, w wolumenach Dockera) są od siebie niezależne i korzystają z jednego `pnpm-lock.yaml`.
+Inna wersja Node niż w `.node-version` kończy `pnpm install` błędem (`engineStrict`). Jeśli HMR w Dockerze nie wykrywa zmian, ustaw `ADMIN_DEV_POLLING=1`.
+
 ## Komendy
 
 `make help` wyświetla pełną listę. Konwencja: cele zbiorcze bez prefiksu, cele aplikacji z jej prefiksem.
@@ -60,23 +80,26 @@ Po aktualizacji z wersji, w której Symfony było w katalogu głównym:
 |---|---|
 | `make bootstrap` | Środowisko dev od zera: build, up, install, migracje |
 | `make build` / `make up` / `make down` | Budowa obrazów dev, start, zatrzymanie (wolumeny zostają) |
-| `make install` | Instalacja zależności wszystkich aplikacji (dev) |
+| `make install` | Instalacja zależności wszystkich aplikacji (dev; Composer wymaga `make up`) |
+| `make pnpm-install` / `make pnpm c="…"` | Zależności JS do wolumenów Dockera / dowolna komenda pnpm w kontenerze |
 | `make check` | Wszystkie bramki jakości: obowiązkowe przed commitem |
 | `make build-prod` | Budowa obrazów produkcyjnych (bez sekretów) |
-| `make check-prod` | Kontrola obrazów produkcyjnych w tymczasowym projekcie (porty 8080/8443) |
+| `make check-prod` | Kontrola obrazów produkcyjnych (backend 8080/8443 w tymczasowym projekcie, admin 8081) |
 | `make backend-composer c="…"` / `make backend-console c="…"` | Composer i `bin/console` w kontenerze |
 | `make backend-migrate` | Migracje bazy danych (nie są uruchamiane automatycznie) |
 | `make backend-test` | PHPUnit (suity `unit` i `functional`), najpierw `make backend-db-test` |
 | `make backend-stan` | PHPStan, poziom `max` |
 | `make backend-arch` | Kontrola architektury DDD/Hexagonal (Deptrac, zasady w [`apps/backend/AGENTS.md`](apps/backend/AGENTS.md)) |
 | `make backend-check` | Wszystkie kontrole backendu (część `make check`) |
+| `make admin-lint` / `admin-typecheck` / `admin-test` / `admin-build` | ESLint, TypeScript, Vitest, build Vite |
+| `make admin-check` | Wszystkie kontrole admina (część `make check`) |
 
 ## CI
 
 GitHub Actions (`.github/workflows/ci.yml`) uruchamia się dla każdego Pull Requesta do `main` i po pushu na `main`, na runnerze `ubuntu-24.04`, z tokenem tylko do odczytu. Używa tych samych komend co lokalnie:
 
-- **Quality gates:** `make bootstrap` (dokładnie jak w „Uruchomienie”) i `make check` (composer validate, lint, Deptrac, PHPStan max, PHPUnit z przygotowaniem bazy testowej),
-- **Production images:** `make check-prod` (obrazy prod z jednorazowymi, generowanymi sekretami).
+- **Quality gates:** `make bootstrap` (dokładnie jak w „Uruchomienie”) i `make check` (backend: composer validate, lint, Deptrac, PHPStan max, PHPUnit; admin: ESLint, TypeScript, Vitest, build),
+- **Production images:** `make check-prod` (backend z jednorazowymi, generowanymi sekretami; admin read-only, bez capabilities).
 
 Workflow nie korzysta z żadnych sekretów repozytorium.
 
@@ -126,9 +149,24 @@ Zalecenia:
 - Stan sprawdzisz komendą `doctrine:migrations:status`.
 - Pisz migracje zgodne wstecz (najpierw dodanie kolumny, usunięcie w kolejnym wdrożeniu), bo przez chwilę stara wersja aplikacji działa na nowym schemacie.
 
+### Obraz produkcyjny admina
+
+`infra/docker/admin` buduje statyczne pliki (Vite) i serwuje je przez Caddy na Alpine:
+- użytkownik uid 1000, port 8080, bez capabilities, z systemem plików tylko do odczytu,
+- fallback SPA i długie cache dla hashowanych assetów,
+- bez TLS i bez proxy `/api`; te obsłuży centralny edge w etapie 4.
+
+Do tego czasu admin nie jest częścią `compose.prod.yaml`. Obraz sprawdza `make admin-check-prod` na `127.0.0.1:8081`:
+- start z `--read-only` i `--cap-drop ALL`,
+- uid inny niż 0,
+- `index.html` i fallback SPA,
+- nagłówki cache i bezpieczeństwa, `Content-Type`,
+- wyłączone API administracyjne Caddy,
+- brak źródeł, source map i Node.js w obrazie.
+
 ### Kontrola obrazów produkcyjnych
 
-`make check-prod` buduje obraz prod i uruchamia go w tymczasowym projekcie `ecommerce-prod-check` na portach 8080/8443 (zmiana: `CHECK_PROD_HTTP_PORT`, `CHECK_PROD_HTTPS_PORT`), obok działającego dev.
+`make check-prod` uruchamia `make admin-check-prod` (opisane wyżej). Obraz backendu buduje i uruchamia w tymczasowym projekcie `ecommerce-prod-check` na portach 8080/8443 (zmiana: `CHECK_PROD_HTTP_PORT`, `CHECK_PROD_HTTPS_PORT`), obok działającego dev.
 Dane są w tmpfs, więc kontrola nie zostawia wolumenów. Sekrety generuje na czas testu i nigdzie ich nie zapisuje. Sprawdza:
 
 - odmowę startu bez `APP_SECRET` i `POSTGRES_PASSWORD`,
