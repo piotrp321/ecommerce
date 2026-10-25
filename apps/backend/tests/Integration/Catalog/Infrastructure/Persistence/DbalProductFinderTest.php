@@ -82,6 +82,15 @@ final class DbalProductFinderTest extends DatabaseTestCase
         self::assertSame([], $this->names(search: '_'));
     }
 
+    public function testSortsNamesByPolishRules(): void
+    {
+        foreach (['Zegar', 'apple', 'Łyżka', 'ćma', 'Cukier', 'Lampa', 'Ćwiek'] as $i => $name) {
+            $this->fixtures->product('P-'.$i, name: $name);
+        }
+
+        self::assertSame(['apple', 'Cukier', 'ćma', 'Ćwiek', 'Lampa', 'Łyżka', 'Zegar'], $this->names());
+    }
+
     public function testACategoryFilterIncludesAllSubcategories(): void
     {
         $electronics = $this->fixtures->category('electronics');

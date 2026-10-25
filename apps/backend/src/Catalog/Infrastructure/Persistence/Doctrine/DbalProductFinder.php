@@ -53,8 +53,9 @@ final readonly class DbalProductFinder implements ProductFinder
 
         $count = (clone $query)->select('COUNT(*)')->fetchOne();
 
+        // Names in Polish order (ICU collation): "apple, Łyżka, Zegar", not by byte value.
         match ($criteria->sort) {
-            ProductSort::Name => $query->orderBy('p.name')->addOrderBy('p.id'),
+            ProductSort::Name => $query->orderBy('p.name COLLATE "pl-x-icu"')->addOrderBy('p.id'),
             ProductSort::PriceAscending => $query->orderBy(self::GROSS_PRICE)->addOrderBy('p.id'),
             ProductSort::PriceDescending => $query->orderBy(self::GROSS_PRICE, 'DESC')->addOrderBy('p.id'),
             ProductSort::Newest => $query->orderBy('p.created_at', 'DESC')->addOrderBy('p.id', 'DESC'),

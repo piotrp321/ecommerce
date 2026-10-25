@@ -16,6 +16,7 @@ use Symfony\Component\Uid\Uuid;
  */
 final readonly class DbalCategoryFinder implements CategoryFinder
 {
+    // Names are ordered by Polish rules (ICU collation), not by byte value of the database default.
     private const string COLUMNS = 'c.id, c.slug, c.name, c.parent_id,
         (SELECT COUNT(*) FROM catalog_product p WHERE p.category_id = c.id) AS product_count';
 
@@ -25,7 +26,7 @@ final readonly class DbalCategoryFinder implements CategoryFinder
 
     public function all(): array
     {
-        return $this->records('SELECT '.self::COLUMNS.' FROM catalog_category c ORDER BY c.name, c.id');
+        return $this->records('SELECT '.self::COLUMNS.' FROM catalog_category c ORDER BY c.name COLLATE "pl-x-icu", c.id');
     }
 
     public function subtree(string $id): array
@@ -40,7 +41,7 @@ final readonly class DbalCategoryFinder implements CategoryFinder
                  UNION
                  SELECT c.id FROM catalog_category c JOIN subtree s ON c.parent_id = s.id
              )
-             SELECT '.self::COLUMNS.' FROM catalog_category c JOIN subtree USING (id) ORDER BY c.name, c.id',
+             SELECT '.self::COLUMNS.' FROM catalog_category c JOIN subtree USING (id) ORDER BY c.name COLLATE "pl-x-icu", c.id',
             ['id' => $id],
         );
     }

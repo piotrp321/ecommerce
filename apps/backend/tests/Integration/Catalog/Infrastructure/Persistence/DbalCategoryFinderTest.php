@@ -68,6 +68,19 @@ final class DbalCategoryFinderTest extends DatabaseTestCase
         self::assertSame([], $this->finder->ancestors($this->electronics->id()->value));
     }
 
+    public function testOrdersCategoriesByPolishRules(): void
+    {
+        $fixtures = new CatalogFixtures(self::service(ProductRepository::class), self::service(CategoryRepository::class));
+        $fixtures->category('lyzki', 'Łyżki', $this->electronics);
+        $fixtures->category('zegary', 'Zegary', $this->electronics);
+        $fixtures->category('anteny', 'anteny', $this->electronics);
+
+        self::assertSame(
+            ['anteny', 'Audio', 'Electronics', 'Łyżki', 'Phones', 'Smartphones', 'Zegary'],
+            array_map(static fn (CategoryRecord $c): string => $c->name, $this->finder->subtree($this->electronics->id()->value)),
+        );
+    }
+
     public function testFindsSingleCategories(): void
     {
         self::assertSame($this->electronics->id()->value, $this->finder->byId($this->phones->id()->value)?->parentId);
