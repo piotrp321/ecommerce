@@ -122,9 +122,9 @@ Accounts, login and roles of customers and administrators live in an external id
    - Errors (RFC 6750), as `application/problem+json` with a generic `detail` (the reason is only logged):
      401 with `WWW-Authenticate: Bearer` without a token or `Bearer error="invalid_token"` for a rejected one,
      403 with `Bearer error="insufficient_scope"` for a valid token without the required role.
-   - Lifetime of the cached keys: the `max-age` of the JWKS response's `Cache-Control` header, as sent by
-     Keycloak; 1 hour when the response has none (Symfony's default), at most 30 days. The value Keycloak
-     sends is to be checked on the running provider.
+   - Lifetime of the cached keys: the `max-age` of the JWKS response's `Cache-Control` header (at most
+     30 days), 1 hour without one (Symfony's default). Keycloak sends `Cache-Control: no-cache` without
+     `max-age` for its certs endpoint, so the backend keeps the keys for 1 hour.
    - Signing key rotation in Keycloak:
      1. add the new key with a lower priority than the active one: it is published in the JWKS but not used for signing yet,
      2. wait longer than the lifetime of the cached keys, so every backend has it,
