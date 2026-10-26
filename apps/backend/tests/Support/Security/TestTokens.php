@@ -5,18 +5,16 @@ declare(strict_types=1);
 namespace App\Tests\Support\Security;
 
 use Jose\Component\Core\AlgorithmManager;
+use Jose\Component\Core\JWK;
 use Jose\Component\KeyManagement\JWKFactory;
 use Jose\Component\Signature\Algorithm\HS256;
+use Jose\Component\Signature\Algorithm\RS256;
 use Jose\Component\Signature\JWSBuilder;
 use Jose\Component\Signature\Serializer\CompactSerializer;
 
 /**
  * Access tokens shaped like Keycloak's, signed with the keys of the fake identity
- * provider. Every claim can be overridden; null removes it.
- *
- * RS256 signatures are made with ext-openssl directly from the PEM key: JWSBuilder
- * converts the JWK to PEM in pure PHP on every signature (without GMP/BCMath this
- * takes most of a second). JWSBuilder signs the HS256 attack token.
+ * provider (JWSBuilder). Every claim can be overridden; null removes it.
  */
 final class TestTokens
 {
@@ -92,13 +90,9 @@ final class TestTokens
      */
     public static function sign(array $claims, string $key, array $header = []): string
     {
-        $header += ['alg' => 'RS256', 'typ' => 'JWT', 'kid' => TestKeys::private($key)->get('kid')];
-        $input = self::base64Url(self::json($header)).'.'.self::base64Url(self::json($claims));
-        if (!openssl_sign($input, $signature, TestKeys::privatePem($key), \OPENSSL_ALGO_SHA256) || !\is_string($signature)) {
-            throw new \RuntimeException('Cannot sign the test token.');
-        }
+        $jwk = TestKeys::private($key);
 
-        return $input.'.'.self::base64Url($signature);
+        return self::build(new RS256(), $claims, $jwk, $header + ['alg' => 'RS256', 'typ' => 'JWT', 'kid' => $jwk->get('kid')]);
     }
 
     /**
@@ -111,13 +105,7 @@ final class TestTokens
     {
         $key = JWKFactory::createFromSecret(TestKeys::publicPem($realm));
 
-        $jws = (new JWSBuilder(new AlgorithmManager([new HS256()])))
-            ->create()
-            ->withPayload(self::json($claims))
-            ->addSignature($key, ['alg' => 'HS256', 'typ' => 'JWT', 'kid' => TestKeys::private($realm)->get('kid')])
-            ->build();
-
-        return (new CompactSerializer())->serialize($jws, 0);
+        return self::build(new HS256(), $claims, $key, ['alg' => 'HS256', 'typ' => 'JWT', 'kid' => TestKeys::private($realm)->get('kid')]);
     }
 
     /**
@@ -154,6 +142,21 @@ final class TestTokens
         $claims = array_replace(['exp' => $now + 300, 'iat' => $now - 5, 'jti' => bin2hex(random_bytes(8))], $defaults, $overrides);
 
         return array_filter($claims, static fn (mixed $value): bool => null !== $value);
+    }
+
+    /**
+     * @param array<string, mixed> $claims
+     * @param array<string, mixed> $header
+     */
+    private static function build(RS256|HS256 $algorithm, array $claims, JWK $key, array $header): string
+    {
+        $jws = (new JWSBuilder(new AlgorithmManager([$algorithm])))
+            ->create()
+            ->withPayload(self::json($claims))
+            ->addSignature($key, $header)
+            ->build();
+
+        return (new CompactSerializer())->serialize($jws, 0);
     }
 
     private static function json(mixed $value): string

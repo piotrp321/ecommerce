@@ -18,7 +18,7 @@ final class TestKeys
     public const string ADMIN = 'admin';
     public const string FOREIGN = 'foreign';
 
-    /** @var array<string, array{JWK, string, string}> name => [private JWK, public key PEM, private key PEM] */
+    /** @var array<string, array{JWK, string}> name => [private JWK, public key PEM] */
     private static array $keys = [];
 
     public static function generate(): void
@@ -33,7 +33,6 @@ final class TestKeys
             self::$keys[$name] = [
                 JWKFactory::createFromKey($privatePem, null, ['kid' => $name.'-key-1', 'alg' => 'RS256', 'use' => 'sig']),
                 $details['key'],
-                $privatePem,
             ];
         }
     }
@@ -56,13 +55,8 @@ final class TestKeys
         return self::key($name)[1];
     }
 
-    public static function privatePem(string $name): string
-    {
-        return self::key($name)[2];
-    }
-
     /**
-     * @return array{JWK, string, string}
+     * @return array{JWK, string}
      */
     private static function key(string $name): array
     {
