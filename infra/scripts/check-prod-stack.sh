@@ -194,7 +194,7 @@ for svc in keycloak redis-session; do
 	[ "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}} {{.HostConfig.CapDrop}} {{.HostConfig.SecurityOpt}}' "$(cid "$svc")")" = "true [ALL] [no-new-privileges:true]" ] \
 		&& pass "${svc}: read-only root filesystem, cap_drop ALL, no-new-privileges" || fail "${svc} container hardening"
 	[ -z "$(docker inspect -f '{{range $p, $b := .NetworkSettings.Ports}}{{range $b}}{{$p}} {{end}}{{end}}' "$(cid "$svc")")" ] \
-		&& pass "${svc} publishes no port (Keycloak management port 9000 included)" || fail "${svc} publishes ports"
+		&& pass "${svc} publishes no port$([ "$svc" = keycloak ] && echo ' (management port 9000 included)')" || fail "${svc} publishes ports"
 done
 # Redis for the store sessions is on the network "sessions" only, which only the store shares.
 networks_of() { docker inspect -f '{{range $name, $n := .NetworkSettings.Networks}}{{$name}} {{end}}' "$(cid "$1")" | tr ' ' '\n' | sed 's/^ecommerce-prod-check_//' | grep . | sort | tr '\n' ' '; }
@@ -281,15 +281,19 @@ for path in / /admin /admin/ /admin/master/console/ /admin/realms/store /realms/
 	/realms/store/protocol/openid-connect/TOKEN /realms/store//protocol/openid-connect/token \
 	'/realms/store/protocol/openid-connect/token;x=1' /realms/store/protocol/openid-connect/%74oken \
 	/realms/store/protocol/openid-connect%2Ftoken /realms/store/login-actions/../protocol/openid-connect/token \
-	/realms/store/./protocol/openid-connect/token /realms/store/protocol/openid-connect/token/ /realms/store/x/%2e%2e/protocol/openid-connect/token; do
+	/realms/store/./protocol/openid-connect/token /realms/store/protocol/openid-connect/token/ /realms/store/x/%2e%2e/protocol/openid-connect/token \
+	'/realms/store/account;x' '/realms/store/protocol/openid-connect/auth;x' /realms/store/%3Bx '/realms/store/a\b'; do
 	got="$(auth_probe "$path")"
 	[ "$got" = "404 0" ] || blocked+=" ${path}=${got}"
 done
 [ -z "$blocked" ] && pass "edge 404 for the admin console, master realm, health, metrics, server-to-server endpoints and their variants" \
 	|| fail "reachable through ${AUTH_DOMAIN}:${blocked}"
-for path in /api/admin/catalog/products /api/admin /auth/backchannel-logout; do
-	got="$(fetch "$STORE_DOMAIN" "$path" -o /dev/null -w '%{http_code} %{size_download}')"
-	[ "$got" = "404 0" ] && pass "https://${STORE_DOMAIN}${path} -> edge 404 (internal only)" || fail "https://${STORE_DOMAIN}${path}: ${got}"
+for path in /api/admin/catalog/products /api/admin '/api/admin;x' '/api/ADMIN/catalog/products' //api/admin \
+	/auth/backchannel-logout '/auth/backchannel-logout;x'; do
+	for method in GET POST; do
+		got="$(fetch "$STORE_DOMAIN" "$path" --path-as-is -X "$method" -o /dev/null -w '%{http_code} %{size_download}')"
+		[ "$got" = "404 0" ] && pass "${method} https://${STORE_DOMAIN}${path} -> edge 404 (internal only)" || fail "${method} https://${STORE_DOMAIN}${path}: ${got}"
+	done
 done
 redirect="$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --resolve "${AUTH_DOMAIN}:${HTTP_PORT}:127.0.0.1" "http://${AUTH_DOMAIN}:${HTTP_PORT}/realms/store/x" || true)"
 [ "$redirect" = "308 https://${AUTH_DOMAIN}/realms/store/x" ] && pass "http://${AUTH_DOMAIN} redirects to HTTPS (308)" || fail "HTTP redirect of ${AUTH_DOMAIN}: ${redirect}"
@@ -334,6 +338,10 @@ claims="$(b64url_decode "$(cut -d. -f2 <<<"$STORE_ACCESS_TOKEN")" | compact)"
 	&& [ "$(json_string typ "$claims")" = "Bearer" ] && grep -qE '"aud":("store-api"|\[[^]]*"store-api")' <<<"$claims" \
 	&& pass "code exchanged inside the network: access token iss ${AUTH}/realms/store, azp store-bff, aud store-api" \
 	|| fail "access token from the internal exchange (error '$(json_string error "$tokens")', iss '$(json_string iss "$claims")')"
+# The backend validates the token against the same Keycloak (discovery inside the network).
+me="$(fetch "$STORE_DOMAIN" /api/me -H "Authorization: Bearer ${STORE_ACCESS_TOKEN}" -w '\n%{http_code}')"
+[ "$(tail -n1 <<<"$me")" = "200" ] && [ "$(json_string email "$(compact <<<"$me")")" = "$customer" ] \
+	&& pass "GET https://${STORE_DOMAIN}/api/me with the access token -> 200 (email ${customer})" || fail "GET /api/me with the access token: HTTP $(tail -n1 <<<"$me")"
 [ "$(json_string userinfo_endpoint "$(auth_curl "${AUTH}/realms/store/.well-known/openid-configuration" | compact)")" = "${AUTH}/realms/store/protocol/openid-connect/userinfo" ] \
 	&& [ "$(auth_curl -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${STORE_ACCESS_TOKEN}" "${AUTH}/realms/store/protocol/openid-connect/userinfo")" = "404" ] \
 	&& pass "public userinfo endpoint -> 404 even with a valid token" || fail "public userinfo with a valid token"
@@ -353,8 +361,8 @@ res="$(printf 'grant_type=password&client_id=admin-cli&username=check-no-otp&pas
 
 echo "== Backend behind the edge"
 expect_health 200 "health check with special-character database password"
-# Protected APIs: 401 without a token and with a rejected one (the identity provider of
-# the check is unreachable), never 500 (e.g. a missing OIDC_* variable).
+# Protected APIs: 401 without a token and with a malformed one, never 500 (e.g. a missing
+# OIDC_* variable); a valid token is checked in the login section.
 for target in "$STORE_DOMAIN /api/me" "$ADMIN_DOMAIN /api/admin/me"; do
 	read -r domain path <<<"$target"
 	got="$(status "$domain" "$path")"
@@ -387,7 +395,7 @@ store_home_ok && pass "store home page works again after the database restart (<
 # The fresh cluster has no Keycloak role and database either: recreate them, as after the
 # first start, and restart Keycloak, which imports the realms again.
 keycloak_db && pass "keycloak-db.sh after the database restart" || fail "keycloak-db.sh after the database restart"
-compose restart keycloak >/dev/null 2>&1
+compose restart keycloak >/dev/null 2>&1 || true
 compose up --detach --no-build --no-deps --wait keycloak >/dev/null 2>&1 && auth_ok \
 	&& pass "keycloak restarted on the recreated database: discovery through the edge works" || fail "keycloak after the database restart"
 leaked=""
