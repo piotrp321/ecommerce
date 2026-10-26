@@ -99,18 +99,18 @@ Sklep pokaże produkt „Kubek” z ceną brutto 49,20 zł wyliczoną przez back
 
 ### Keycloak i Redis sesji (dev)
 
-Środowisko dev zawiera dostawcę tożsamości i magazyn sesji sklepu. Aplikacje dostają już zmienne konfiguracji (`OIDC_STORE_*`, `OIDC_ADMIN_*` w backendzie, `STORE_OIDC_*`, `STORE_REDIS_URL`, `STORE_SESSION_ENC_KEYS` w sklepie), ale logowania jeszcze nie używają. Żadna usługa aplikacji nie zależy od Keycloaka ani Redisa (`depends_on`): backend i katalog sklepu działają, gdy oba są zatrzymane. Obie usługi są tylko w `compose.override.yaml`. Topologia prod ich nie zawiera.
+Środowisko dev zawiera dostawcę tożsamości i magazyn sesji sklepu. Backend dostaje zmienne `OIDC_STORE_*` i `OIDC_ADMIN_*` (jeszcze nieużywane). Sklep dostaje komplet zmiennych trybu `STORE_AUTH_MODE=oidc` z działającymi wartościami dev: `STORE_ENVIRONMENT`, `STORE_PUBLIC_URL`, `STORE_OIDC_ISSUER` (dokładnie claim `iss`), `STORE_OIDC_INTERNAL_URL` (`http://keycloak:8080/realms/store`), `STORE_OIDC_CLIENT_ID`, `STORE_OIDC_CLIENT_SECRET`, `STORE_REDIS_URL` i `STORE_SESSION_ENC_KEYS` (`kid:base64(32 bajty)`, pierwszy aktywny). Żadna usługa aplikacji nie zależy od Keycloaka ani Redisa (`depends_on`): backend i katalog sklepu działają, gdy oba są zatrzymane. Obie usługi są tylko w `compose.override.yaml`. Topologia prod ich nie zawiera.
 
 **Keycloak 26.8.0** (`infra/docker/keycloak`, `start-dev`) działa na `http://localhost:${KEYCLOAK_PORT:-8180}`. Port zarządzania 9000 (`/health/ready`, healthcheck) nie jest publikowany.
 
 - **Issuer** jest publiczny: `http://localhost:<KEYCLOAK_PORT>/realms/<realm>` (`KC_HOSTNAME`). Usługi w sieci Compose pobierają discovery z `http://keycloak:8080/realms/<realm>/.well-known/openid-configuration` i dostają w nim endpointy back-channel (token, JWKS) pod `http://keycloak:8080` (`KC_HOSTNAME_BACKCHANNEL_DYNAMIC`), z tym samym publicznym issuerem.
-- **Baza:** osobna baza i rola `keycloak` w tym samym PostgreSQL. Tworzy je `infra/scripts/keycloak-db.sh`, uruchamiany przez `make up` po starcie bazy, a przed resztą usług. Skrypt jest idempotentny: tworzy tylko brakujące obiekty, przy każdym uruchomieniu ustawia hasło z `KEYCLOAK_DB_PASSWORD` i odbiera `CONNECT` grupie `PUBLIC` na bazie Keycloaka i bazie aplikacji. Rola `keycloak` nie łączy się więc z danymi aplikacji. Skrypt działa też na istniejącym wolumenie i niczego nie usuwa.
+- **Baza:** osobna baza i rola `keycloak` w tym samym PostgreSQL. Tworzy je `infra/scripts/keycloak-db.sh`, uruchamiany przez `make up` po starcie bazy, a przed resztą usług. Skrypt jest idempotentny: tworzy tylko brakujące obiekty, przy każdym uruchomieniu ustawia hasło z `KEYCLOAK_DB_PASSWORD` i odbiera grupie `PUBLIC` prawa `CONNECT` i `TEMPORARY` na wszystkich bazach poza szablonami (`keycloak`, `app`, `app_test`, `postgres`). Rola `keycloak` łączy się więc tylko z własną bazą. Superużytkownik aplikacji i `pg_isready` nie są tym ograniczeni. Baza utworzona później (np. `app_test` przy pierwszym `make backend-db-test`) zostaje objęta przy następnym `make up`. Do tego czasu rola `keycloak` może się z nią połączyć, ale nie odczyta żadnej tabeli. Skrypt działa też na istniejącym wolumenie i niczego nie usuwa.
 - **Realmy** (`infra/keycloak/realms/*.json`) są importowane przy starcie (`--import-realm`) tylko wtedy, gdy jeszcze nie istnieją. Zmiana pliku nie zmienia więc istniejącego realmu: obowiązuje w nowym projekcie Compose albo po usunięciu realmu w konsoli. Sekrety i adresy są placeholderami Keycloaka (`${STORE_OIDC_CLIENT_SECRET}`, `${STORE_PUBLIC_URL}` …), które Compose przekazuje do kontenera.
 
 | Realm | Konfiguracja |
 |---|---|
 | `store` | rejestracja, login e-mailem, weryfikacja e-mail, ochrona brute force (czasowa blokada), hasło `length(12)`, `notUsername`, `notEmail`, access token 5 min, sesja SSO 30 min bezczynności / 12 h, rotacja refresh tokenów (bez ponownego użycia), konsola konta wyłączona |
-| `admin` | bez rejestracji i „zapomniałem hasła”, OTP wymagane (Configure OTP jako domyślna akcja wymagana), hasło `length(14)`, sesja SSO 15 min / 8 h, ta sama rotacja refresh tokenów, konsola konta wyłączona |
+| `admin` | bez rejestracji i „zapomniałem hasła”, ochrona brute force (czasowa blokada), OTP zawsze wymagane: własny browser flow `admin browser` z OTP Form jako REQUIRED (użytkownik bez OTP musi je skonfigurować przy logowaniu), Configure OTP jako domyślna akcja wymagana, akcja usuwania poświadczeń wyłączona; hasło `length(14)`, sesja SSO 15 min / 8 h, ta sama rotacja refresh tokenów, konsola konta wyłączona |
 
 | Klient | Realm | Konfiguracja |
 |---|---|---|
@@ -124,10 +124,12 @@ Sklep pokaże produkt „Kubek” z ceną brutto 49,20 zł wyliczoną przez back
 **Redis 8.8.2** (`redis-session`) przechowuje sesje sklepu. AOF jest włączony (`everysec`), bez snapshotów RDB, z limitem `maxmemory 256mb` i polityką `noeviction`, więc przy pełnej pamięci zapis zwraca błąd i żadna sesja nie znika po cichu. Dane leżą w wolumenie `redis_session_data`. Plik ACL powstaje przy starcie z haseł w zmiennych środowiskowych:
 
 - `default`: wyłączony, więc polecenie bez logowania zwraca `NOAUTH`,
-- `store`: tylko klucze `store:*` i polecenia sesji (`get`, `set`, `getdel`, `del`, `exists`, `expire`, `pexpire`, `ttl`, `hget`, `hgetall`, `hset`, `hdel`, `sadd`, `srem`, `smembers`, `eval`, `evalsha`, `ping`, `auth`, `hello`, `client setname/setinfo`),
+- `store`: tylko klucze `store:*` i polecenia kodu sesji sklepu: `eval`, `evalsha`, `multi`, `exec`, `get`, `getdel`, `set`, `del`, `hset`, `hgetall`, `expire`, `pexpire`, `sadd`, `smembers`, `srem`, `ping` oraz handshake node-redis (`hello`, `auth`, `client setinfo`); `CLIENT LIST`, `ACL`, `CONFIG`, `KEYS` i `FLUSHALL` są zabronione,
 - `ops`: administracja i healthcheck, np. `docker compose exec redis-session sh -c 'REDISCLI_AUTH="$REDIS_OPS_PASSWORD" redis-cli --user ops INFO memory'`.
 
-**Sekrety dev** mają wartości domyślne z prefiksem `dev-only-`, zapisane w `compose.override.yaml`. Można je nadpisać w `.env` lub w środowisku: `KEYCLOAK_DB_PASSWORD`, `KEYCLOAK_ADMIN_PASSWORD`, `STORE_OIDC_CLIENT_SECRET`, `ADMIN_OIDC_CLIENT_SECRET`, `REDIS_SESSION_PASSWORD`, `REDIS_OPS_PASSWORD`, `STORE_SESSION_ENC_KEYS`. Hasła Redisa nie mogą zawierać białych znaków. Nigdy nie używaj tych wartości poza dev.
+**Sekrety dev** mają wartości domyślne z prefiksem `dev-only-`, zapisane w `compose.override.yaml`. Można je nadpisać w `.env` lub w środowisku: `KEYCLOAK_DB_PASSWORD`, `KEYCLOAK_ADMIN_PASSWORD`, `STORE_OIDC_CLIENT_SECRET`, `ADMIN_OIDC_CLIENT_SECRET`, `REDIS_SESSION_PASSWORD`, `REDIS_OPS_PASSWORD`, `STORE_SESSION_ENC_KEYS`. Hasła Redisa nie mogą zawierać białych znaków. Hasło użytkownika `store` trafia bez kodowania do `STORE_REDIS_URL`, więc może zawierać tylko znaki bezpieczne w URL (bez `@ : / ? # %`). Nigdy nie używaj tych wartości poza dev.
+
+**E-mail w dev:** środowisko nie ma serwera SMTP. Samodzielna rejestracja w realmie `store` (w Keycloaku 26 formularz bez hasła, potem wymagane VERIFY_EMAIL i UPDATE_PASSWORD) nie wyśle więc maila i nie da się jej dokończyć. Testy ręczne i automatyczne używają użytkowników z `make keycloak-dev-seed`.
 
 #### Keycloak: użytkownicy testowi
 
@@ -153,13 +155,15 @@ Testy automatyczne (E2E, QA) mogą wyliczyć kod tak jak `infra/scripts/check-de
 
 #### Kontrola infrastruktury dev
 
-`make stack-check-dev` uruchamia `infra/scripts/check-dev-infra.sh`. Skrypt stawia całą topologię dev we własnym projekcie `ecommerce-dev-check`, przekazywanym jawnie przez `-p`, więc wygrywa z `COMPOSE_PROJECT_NAME` z `.env`. Porty projektu to 28080/28443/25432/25173/23000/28180/26379. Projekt zmienisz zmienną `DEV_CHECK_PROJECT`, a porty zmiennymi `DEV_CHECK_*_PORT`, co pozwala na równoległe sesje. Na końcu skrypt usuwa kontenery i zostawia wolumeny (nigdy `down -v`). Świeży przebieg wymaga więc nowej nazwy projektu, a zmiana portów także, bo realmy importują się raz. Skrypt sprawdza:
+`make stack-check-dev` uruchamia `infra/scripts/check-dev-infra.sh`. Skrypt stawia całą topologię dev we własnym projekcie `ecommerce-dev-check`, przekazywanym jawnie przez `-p`, więc wygrywa z `COMPOSE_PROJECT_NAME` z `.env`. Porty projektu to 28080/28443/25432/25173/23000/28180/26379. Projekt zmienisz zmienną `DEV_CHECK_PROJECT`, a porty zmiennymi `DEV_CHECK_*_PORT`, co pozwala na równoległe sesje. Na końcu skrypt usuwa kontenery i zostawia wolumeny (nigdy `down -v`). Świeży przebieg wymaga więc nowej nazwy projektu, a zmiana portów także, bo realmy importują się raz. Skrypt sam buduje obrazy z bieżącego drzewa roboczego (z cache warstw), więc sprawdza aktualne pliki realmów. Gdy projekt ma już wolumeny, skrypt wypisuje na początku ostrzeżenie `WARN`, bo zmiany w `infra/keycloak/realms/*.json` nie zostaną wtedy sprawdzone. Przy porażce wypisuje logi Keycloaka i Redisa, zanim usunie kontenery. Skrypt sprawdza:
 
-- **usługi:** health Keycloaka i Redisa, `keycloak-db.sh` i `keycloak-dev-seed` uruchomione kilka razy bez błędów, rola `keycloak` bez dostępu do bazy aplikacji,
+- **usługi:** health Keycloaka i Redisa, `keycloak-db.sh` i `keycloak-dev-seed` uruchomione kilka razy bez błędów, rola `keycloak` bez dostępu do baz `app`, `app_test` i `postgres`, `pg_isready` bez zmian,
 - **discovery:** obu realmów z hosta (issuer publiczny) i z sieci Compose (JWKS i token endpoint pod `http://keycloak:8080`),
-- **konfigurację:** realmów i klientów (kcadm), odrzucenie password grant, client credentials, żądania bez PKCE, PKCE `plain`, obcego redirect URI i wymiany kodu bez `code_verifier`,
+- **konfigurację:** realmów i klientów (kcadm, m.in. brute force w obu realmach i OTP Form REQUIRED w realmie admin), odrzucenie password grant, client credentials, żądania bez PKCE, PKCE `plain`, obcego redirect URI i wymiany kodu bez `code_verifier`; klient uwierzytelniany przez `client_secret_basic`,
+- **OTP w realmie admin:** `kc_action=delete_credential` nie usuwa OTP admina, a użytkownik założony przez API bez OTP (z `"requiredActions": []`) musi skonfigurować OTP przy logowaniu i nie dostaje kodu,
+- **sklep:** zmienne trybu `oidc` ustawione i niepuste, issuer i sekret zgodne z Keycloakiem, `STORE_SESSION_ENC_KEYS` w formacie `kid:base64(32 bajty)`, a `STORE_REDIS_URL` loguje się do Redisa jako `store` (wartości nie są wypisywane),
 - **logowanie:** klienta i admina (z kodem TOTP) przez przeglądarkowy flow z PKCE, a w tokenach `iss`, `aud`, `azp`, `typ`, `email_verified`, `resource_access.admin-api.roles` i czas życia 5 min,
-- **Redis:** `NOAUTH` bez hasła, wyłączony `default`, `noeviction`, ograniczenia ACL użytkownika `store` (`FLUSHALL`, `CONFIG`, `KEYS`, klucze spoza `store:*`),
+- **Redis:** `NOAUTH` bez hasła, wyłączony `default`, `noeviction`, ACL użytkownika `store` (działają `MULTI`/`EXEC`, `EVAL`, `CLIENT SETINFO`; zabronione `FLUSHALL`, `CONFIG`, `KEYS`, `CLIENT LIST`, `ACL` i klucze spoza `store:*`),
 - **porty:** wyłącznie `127.0.0.1`, port 9000 niepublikowany,
 - **niezależność aplikacji:** backend `/health` i strona sklepu przy zatrzymanym Keycloaku i Redisie, brak `depends_on` na nich,
 - **trwałość:** po `down`/`up` klucz Redisa, realmy i użytkownicy zostają, a dane aplikacji (tabele i liczba wierszy) są nietknięte.
