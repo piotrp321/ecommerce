@@ -2,7 +2,7 @@
 # - aggregate targets without a prefix (bootstrap, up, check, check-prod...),
 # - per-application targets prefixed with the app name (backend-*, admin-*, store-*, edge-*),
 # - the whole topology prefixed with stack- (stack-check-prod, stack-check-dev),
-# - the dev identity provider (Keycloak) prefixed with keycloak-,
+# - the identity provider (Keycloak) prefixed with keycloak-,
 # - the API contract (docs/api/openapi.yaml) prefixed with contract-,
 # - pnpm workspace targets prefixed with pnpm-.
 # None of the targets removes volumes or data.
@@ -23,7 +23,7 @@ PNPM        = $(DOCKER_COMP) run --rm --no-deps admin pnpm
 	backend-test backend-stan backend-arch backend-check backend-build-prod \
 	admin-lint admin-typecheck admin-test admin-build admin-check admin-build-prod admin-check-prod \
 	store-lint store-typecheck store-test store-build store-check store-build-prod store-check-prod \
-	edge-build-prod stack-check-prod stack-check-dev keycloak-dev-seed contract-lint
+	edge-build-prod stack-check-prod stack-check-auth stack-check-dev keycloak-dev-seed keycloak-build-prod contract-lint
 
 ## —— Help ———————————————————————————————————————————————————————————————————
 help: ## List available targets
@@ -50,9 +50,9 @@ install: pnpm-install backend-install ## Install the dependencies of all applica
 
 check: contract-lint backend-check admin-check store-check ## Run all quality gates (required before every commit)
 
-build-prod: backend-build-prod admin-build-prod store-build-prod edge-build-prod ## Build all production images
+build-prod: backend-build-prod admin-build-prod store-build-prod edge-build-prod keycloak-build-prod ## Build all production images
 
-check-prod: admin-check-prod store-check-prod stack-check-prod ## Check the prod images (admin 8081, store 8082) and the whole topology (edge 8080/8443)
+check-prod: admin-check-prod store-check-prod stack-check-prod stack-check-auth ## Check the prod images (admin 8081, store 8082), the whole topology (edge 8080/8443) and the sign-in flow
 
 ## —— pnpm workspace (JavaScript apps) ———————————————————————————————————————
 pnpm-install: ## Install the workspace dependencies into the container volumes (frozen lockfile)
@@ -150,16 +150,26 @@ store-build-prod: ## Build the store production image (standalone Next.js, unpri
 store-check-prod: store-build-prod ## Run the store prod image on 127.0.0.1:8082 and check it
 	@./infra/scripts/check-prod-store.sh
 
-## —— Keycloak (identity provider, dev) ——————————————————————————————————————
+## —— Keycloak (identity provider) ——————————————————————————————————————
 keycloak-dev-seed: ## Create the dev-only test users (store customer, admin with TOTP); idempotent, needs `make up`
 	@DOCKER_COMP="$(DOCKER_COMP)" ./infra/scripts/keycloak-dev-seed.sh
+
+keycloak-build-prod: ## Build the Keycloak production image (optimized build, realms baked in, no secrets)
+	@docker build --pull --file infra/docker/keycloak/Dockerfile --target keycloak_prod --tag $(IMAGES_PREFIX)ecommerce-keycloak .
 
 ## —— Edge, production topology and dev topology check ————————————————————————
 edge-build-prod: ## Build the edge proxy image (Caddy, configuration baked in)
 	@docker build --pull --file infra/edge/Dockerfile --target edge_prod --tag $(IMAGES_PREFIX)ecommerce-edge .
 
-stack-check-prod: backend-build-prod admin-build-prod store-build-prod edge-build-prod ## Run the whole prod topology in an ephemeral project (edge 8080/8443) and check it
+stack-check-prod: backend-build-prod admin-build-prod store-build-prod edge-build-prod keycloak-build-prod ## Run the whole prod topology in an ephemeral project (edge 8080/8443) and check it
 	@./infra/scripts/check-prod-stack.sh
+
+stack-check-auth: backend-build-prod admin-build-prod store-build-prod edge-build-prod keycloak-build-prod ## Check the store sign-in flow end to end (infra/scripts/check-auth-flow.sh, when present)
+	@if [ -f infra/scripts/check-auth-flow.sh ]; then \
+		./infra/scripts/check-auth-flow.sh; \
+	else \
+		echo "stack-check-auth: infra/scripts/check-auth-flow.sh does not exist yet, nothing to check"; \
+	fi
 
 stack-check-dev: ## Run the dev topology in its own project (ecommerce-dev-check) and check Keycloak, Redis and exposure
 	@./infra/scripts/check-dev-infra.sh

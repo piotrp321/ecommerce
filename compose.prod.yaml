@@ -1,7 +1,11 @@
 # Production: docker compose -f compose.yaml -f compose.prod.yaml up --wait
 # Topology: the edge proxy (Caddy) is the only public entry point; it terminates TLS
-# and routes by domain and path to the backend, the store and the admin. Backend,
-# store, admin and PostgreSQL are reachable only inside the Compose network.
+# and routes by domain and path to the backend, the store, the admin and Keycloak
+# (AUTH_DOMAIN, browser endpoints only). Backend, store, admin, Keycloak, PostgreSQL
+# and Redis are reachable only inside the Compose network; Redis (store sessions) only
+# on the separate network "sessions", shared with the store alone.
+# Start order: the database, then infra/scripts/keycloak-db.sh (the Keycloak role and
+# database), then everything else (README, "Uruchomienie produkcyjne").
 # Each application is a separate image and can be built and redeployed on its own
 # (docker compose ... up -d --no-deps <service>); the edge does not need a restart.
 #
@@ -27,6 +31,7 @@ services:
     environment:
       STORE_DOMAIN: ${STORE_DOMAIN:?STORE_DOMAIN must be set (e.g. shop.example.com)}
       ADMIN_DOMAIN: ${ADMIN_DOMAIN:?ADMIN_DOMAIN must be set (e.g. admin.example.com)}
+      AUTH_DOMAIN: ${AUTH_DOMAIN:?AUTH_DOMAIN must be set (e.g. auth.example.com)}
       # Extra Caddy global options, e.g. "email ops@example.com" for ACME.
       CADDY_GLOBAL_OPTIONS: ${EDGE_GLOBAL_OPTIONS:-}
     read_only: true
@@ -73,6 +78,21 @@ services:
       # Unset: the API; STORE_BACKEND_URL= (empty) selects the demo data. No depends_on:
       # the store is deployed independently and shows an error page while the backend is down.
       STORE_BACKEND_URL: ${STORE_BACKEND_URL-http://backend:80}
+      # Customer sign-in (OIDC BFF, client store-bff) and sessions in redis-session.
+      # STORE_OIDC_ISSUER is exactly the token "iss" (public, through the edge); discovery,
+      # tokens and JWKS go to the same issuer inside the network (STORE_OIDC_INTERNAL_URL).
+      STORE_ENVIRONMENT: production
+      STORE_AUTH_MODE: oidc
+      STORE_PUBLIC_URL: https://${STORE_DOMAIN:?STORE_DOMAIN must be set (e.g. shop.example.com)}
+      STORE_OIDC_ISSUER: https://${AUTH_DOMAIN:?AUTH_DOMAIN must be set (e.g. auth.example.com)}/realms/store
+      STORE_OIDC_INTERNAL_URL: http://keycloak:8080/realms/store
+      STORE_OIDC_CLIENT_ID: store-bff
+      STORE_OIDC_CLIENT_SECRET: ${STORE_OIDC_CLIENT_SECRET:?STORE_OIDC_CLIENT_SECRET must be set}
+      # The password goes into the URL unencoded: URL-safe characters only.
+      STORE_REDIS_URL: redis://store:${REDIS_SESSION_PASSWORD:?REDIS_SESSION_PASSWORD must be set}@redis-session:6379
+      # kid:base64(32 bytes)[,kid:base64...], the first one active.
+      STORE_SESSION_ENC_KEYS: ${STORE_SESSION_ENC_KEYS:?STORE_SESSION_ENC_KEYS must be set (kid:base64 of 32 bytes)}
+    networks: [default, sessions]
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
@@ -82,6 +102,70 @@ services:
   database:
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      # Read by infra/scripts/keycloak-db.sh (psql \getenv) to set the keycloak role password.
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?KEYCLOAK_DB_PASSWORD must be set}
+
+  # Identity provider (realms store and admin, imported once from the image). Public
+  # address https://AUTH_DOMAIN (issuer of the tokens), served by the edge without the
+  # admin console, the master realm and the server-to-server endpoints; inside the network
+  # http://keycloak:8080 (back-channel: discovery, token, JWKS). Administration only from
+  # inside the container: docker compose ... exec keycloak /opt/keycloak/bin/kcadm.sh ...
+  keycloak:
+    image: ${IMAGES_PREFIX:-}ecommerce-keycloak
+    build:
+      # Repository root as context, restricted by infra/docker/keycloak/Dockerfile.dockerignore.
+      context: .
+      dockerfile: infra/docker/keycloak/Dockerfile
+      target: keycloak_prod
+    restart: unless-stopped
+    environment:
+      KC_DB_URL: jdbc:postgresql://database:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?KEYCLOAK_DB_PASSWORD must be set}
+      # TLS ends at the edge: plain HTTP inside the network, the public URL from the
+      # hostname, the client address from X-Forwarded-For (set by the edge).
+      KC_HOSTNAME: https://${AUTH_DOMAIN:?AUTH_DOMAIN must be set (e.g. auth.example.com)}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      # Admin console address, never routed by the edge (kcadm.sh inside the container).
+      KC_HOSTNAME_ADMIN: http://localhost:8080
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME:?KEYCLOAK_ADMIN_USERNAME must be set}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD must be set}
+      JAVA_OPTS_KC_HEAP: -Xms256m -Xmx512m
+      # Placeholders of the realm files, resolved during the import.
+      STORE_PUBLIC_URL: https://${STORE_DOMAIN:?STORE_DOMAIN must be set (e.g. shop.example.com)}
+      ADMIN_PUBLIC_URL: https://${ADMIN_DOMAIN:?ADMIN_DOMAIN must be set (e.g. admin.example.com)}
+      STORE_OIDC_CLIENT_SECRET: ${STORE_OIDC_CLIENT_SECRET:?STORE_OIDC_CLIENT_SECRET must be set}
+      ADMIN_OIDC_CLIENT_SECRET: ${ADMIN_OIDC_CLIENT_SECRET:?ADMIN_OIDC_CLIENT_SECRET must be set}
+    read_only: true
+    tmpfs:
+      - /tmp:uid=1000,gid=0
+      - /opt/keycloak/data/tmp:uid=1000,gid=0
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 1g
+    depends_on:
+      database:
+        condition: service_healthy
+
+  # Store sessions (base definition and ACL in compose.yaml), reachable by the store only.
+  redis-session:
+    user: redis
+    environment:
+      REDIS_SESSION_PASSWORD: ${REDIS_SESSION_PASSWORD:?REDIS_SESSION_PASSWORD must be set}
+      REDIS_OPS_PASSWORD: ${REDIS_OPS_PASSWORD:?REDIS_OPS_PASSWORD must be set}
+    networks: [sessions]
+    read_only: true
+    tmpfs:
+      - /tmp:uid=999,gid=1000
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+networks:
+  # Store sessions: only the store and redis-session, without access to the outside.
+  sessions:
+    internal: true
 
 volumes:
   edge_data:
