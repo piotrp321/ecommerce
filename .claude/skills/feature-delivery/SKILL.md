@@ -1,6 +1,6 @@
 ---
 name: feature-delivery
-description: Dostarczenie funkcjonalności end-to-end z subagentami developer, code-reviewer i qa-tester. Plan i kryteria akceptacji, akceptacja użytkownika, implementacja w worktree, niezależne review i QA na tym samym SHA, poprawki, kontrole, CI, draft PR. Bez merge.
+description: Dostarczenie funkcjonalności end-to-end z subagentami developer, code-reviewer i qa-tester. Plan i kryteria akceptacji, akceptacja użytkownika, implementacja w worktree, niezależne review i QA na tym samym SHA (FULL, potem DELTA), poprawki, kontrole, CI, draft PR i raport wykonania. Bez merge.
 argument-hint: "<opis zadania>"
 disable-model-invocation: true
 ---
@@ -22,6 +22,7 @@ Jesteś Orchestratorem: prowadzisz zadanie od analizy do PR gotowego do decyzji 
 5. **Zielone testy nie dowodzą poprawności biznesowej.** Każde kryterium akceptacji potrzebuje dowodu: testu, który asercją sprawdza regułę, i scenariusza QA na działającej aplikacji.
 6. **Tylko subagenci przez narzędzie Agent i SendMessage.** Bez Agent Teams i bez forków do implementacji. Subagenci nie rozmawiają z użytkownikiem: ich `NEEDS_DECISION` przekazujesz Ty.
 7. **Nie przewidujesz wyników.** Subagenci działają w tle. O wyniku mówisz dopiero po powiadomieniu o zakończeniu.
+8. **Model i effort subagentów** pochodzą z frontmatter ich definicji. Wywołując narzędzie Agent, nie przekazujesz parametrów `model` ani `effort`, bo nadpisałyby definicję. Ty działasz na modelu głównej sesji.
 
 ## Izolacja Dockera
 
@@ -38,33 +39,51 @@ Na maszynie działają kontenery innych sesji, a `compose.yaml` ma `name: ecomme
   | `POSTGRES_PORT` / `ADMIN_PORT` / `STORE_PORT` | 15432 / 15173 / 13000 | 25432 / 25173 / 23000 |
 
 - Automatycznie dozwolone są tylko cele dev w zweryfikowanym projekcie (`make bootstrap`, `up`, `down`, `check` oraz cele aplikacji bez `-prod`).
-- **Nie uruchamiasz automatycznie** `make build-prod`, `check-prod` ani żadnego celu `*-prod`. `infra/scripts/check-prod-stack.sh` używa stałego projektu `ecommerce-prod-check` i sprząta go przez `down --remove-orphans`, a `COMPOSE_PROJECT_NAME` ze środowiska lub `.env` nadpisuje tę nazwę. Dwie sesje mogą więc zatrzymać sobie nawzajem kontenery. Te kontrole wykonuje job CI `production-image`. Lokalnie uruchamia je użytkownik.
+- **Nie uruchamiasz lokalnie** `make build-prod`, `check-prod` ani żadnego celu `*-prod`. `infra/scripts/check-prod-stack.sh` używa stałego projektu `ecommerce-prod-check` i sprząta go przez `down --remove-orphans`, a `COMPOSE_PROJECT_NAME` ze środowiska lub `.env` nadpisuje tę nazwę. Dwie sesje mogą więc zatrzymać sobie nawzajem kontenery.
+- Job CI `production-image` (`make check-prod`) **nie uruchamia się automatycznie**, tylko ręcznie (`workflow_dispatch`). Przy **zmianach wpływających na obrazy produkcyjne** (`infra/`, `compose*.yaml`, `Makefile`, Dockerfile, manifesty i lockfile zależności: `composer.*`, `package.json`, `pnpm-lock.yaml`) zalecasz uruchomienie go przed merge (krok 10).
 - Nigdy: `docker compose down -v`, `docker volume rm`/`prune`, `docker system prune`, zatrzymywanie ani usuwanie kontenerów spoza projektu `fd-<slug>-*`.
+
+## Pomiar wykonania
+
+Znaczniki czasu zapisujesz w logu poza repozytorium, jednym poleceniem na zdarzenie:
+```
+echo "$(date +%s) <ZDARZENIE> <szczegóły>" >> /tmp/feature-delivery-${CLAUDE_SESSION_ID}.log
+```
+- `START <slug>` na początku kroku 1, `END` na końcu kroku 12.
+- `ASK <powód>` tuż przed każdym pytaniem, na którego odpowiedź czekasz (plan, push, eskalacja, `NEEDS_DECISION`), i `ANSWER` na początku tury z odpowiedzią użytkownika.
+- `DEV_START <n>` przed uruchomieniem lub wznowieniem `developer` i `DEV_END <n>` po odebraniu raportu. Tak samo `REVIEW_START <n> <FULL|DELTA>` / `REVIEW_END <n>` oraz `QA_START <n> <FULL|DELTA>` / `QA_END <n>`.
+- `MAKE_CHECK <developer|orchestrator> <SHA> <PASS|FAIL>` dla każdego pełnego `make check`, `ROUND <k>` na początku rundy poprawek, `CI <job> <wynik> <SHA>`, `PR <url>`.
+
+Czas liczysz wyłącznie z tych znaczników i z pól `Czas` w raportach agentów, nigdy z długości rozmowy. Brak znacznika oznacza „brak pomiaru”. Jeśli log zawiera wcześniejsze przebiegi, liczysz od ostatniego `START`.
 
 ## Workflow
 
 ### 1. Przyjęcie
-- Pusty `$ARGUMENTS`: zapytaj o opis zadania i zakończ turę.
+- Zapisz `START`. Pusty `$ARGUMENTS`: zapytaj o opis zadania i zakończ turę.
 - `git fetch origin`. Ustal `<slug>` (`[a-z0-9-]`, do 24 znaków) i gałąź `feature/<slug>`. Sprawdź, że gałąź nie istnieje (`git branch --list feature/<slug>`, `git ls-remote --heads origin feature/<slug>`).
 
 ### 2. Analiza i plan
-Przeczytaj `AGENTS.md` (główny i dotkniętych aplikacji), `docs/roadmap.md` (czy zadanie należy do bieżącego etapu), `docs/specs/`, `docs/adr/`, `docs/api/openapi.yaml` i kod dotkniętych obszarów. Do szerokiego przeszukania możesz użyć `Explore`. Niejasne wymaganie: zapytaj zamiast zgadywać.
+Czytasz tylko to, co dotyczy zadania, a nie całe repozytorium i wszystkie ADR:
+- `AGENTS.md` aplikacji, których dotyczy zadanie (główny `AGENTS.md` masz w kontekście),
+- w `docs/roadmap.md` bieżący etap (czy zadanie do niego należy),
+- w `docs/specs/` reguły, których dotyczy zadanie,
+- ADR wybrane po tytule (`ls docs/adr`) i obszarze zmian,
+- `docs/api/openapi.yaml` tylko przy zmianach API,
+- kod dotkniętych modułów i ich bezpośrednich zależności. Do szerokiego wyszukiwania możesz użyć `Explore`.
 
-Plan zawiera:
-- cel i kontekst, z odwołaniami do reguł ze spec,
-- zakres i „poza zakresem”,
-- dotknięte aplikacje, moduły i pliki, a także zmiany kontraktu API, migracje i ewentualny ADR,
-- projekt rozwiązania zgodny z AGENTS.md i ADR,
-- kryteria akceptacji `AC-1..n`: obserwowalne i testowalne (Given/When/Then), każde z odwołaniem do reguły spec albo wymagania użytkownika,
-- strategię testów: typ testu dla każdego AC i obszary dla QA (API, baza, współbieżność, przeglądarka, dostępność),
-- kontrole: `make check`; przy zmianach w `infra/`, `compose*.yaml`, `Makefile` lub Dockerfile adnotację „kontrola prod w CI”,
-- ryzyka, pytania otwarte, gałąź i profile środowisk.
+Niejasne wymaganie: zapytaj zamiast zgadywać. Plan jest zwięzły i zawiera:
+- **zakres** i „poza zakresem”, z odwołaniami do reguł ze spec,
+- **kryteria akceptacji** `AC-1..n`: obserwowalne i testowalne (Given/When/Then), każde z odwołaniem do reguły spec albo wymagania użytkownika,
+- **istotne decyzje architektoniczne**: moduły, kontrakt API, migracje, ewentualny ADR,
+- **strategię testów**: typ testu dla każdego AC i obszary dla QA (API, baza, współbieżność, przeglądarka, dostępność),
+- **ryzyka** i pytania otwarte,
+- gałąź, profile środowisk i kontrole: `make check`; przy zmianach wpływających na obrazy produkcyjne adnotację „zalecany ręczny `production-image` przed merge”.
 
 ### 3. Akceptacja planu (bramka)
-Pokaż plan i zapytaj przez `AskUserQuestion`: „Akceptuję” albo „Zmiany”. Bez wyraźnej akceptacji nie uruchamiasz `developer`.
+Pokaż plan i zapytaj przez `AskUserQuestion`: „Akceptuję” albo „Zmiany” (`ASK`/`ANSWER`). Bez wyraźnej akceptacji nie uruchamiasz `developer`.
 
 ### 4. Implementacja
-Uruchom `developer` z briefem D1 i poczekaj na raport. Przy `BLOCKED` lub `NEEDS_DECISION` przekaż sprawę użytkownikowi. Zapisz w bloku stanu ID agenta, worktree, gałąź i SHA.
+Uruchom `developer` z briefem D1 i poczekaj na raport. Przy `BLOCKED` lub `NEEDS_DECISION` przekaż sprawę użytkownikowi. Zapisz w bloku stanu ID agenta, worktree, gałąź i SHA, a w logu `MAKE_CHECK` z raportu.
 
 ### 5. Zamrożenie wersji
 Sprawdź sam, poleceniami tylko do odczytu:
@@ -77,8 +96,8 @@ git diff --stat <BASE>...<SHA>            # obszary zgodne z planem
 ```
 Jeśli coś się nie zgadza, wróć do `developer` albo eskaluj. Od tej chwili `REVIEW_SHA` = SHA.
 
-### 6. Review i QA równolegle
-W jednej wiadomości uruchom `code-reviewer` (brief R1) i `qa-tester` (brief Q1) na tym samym `REVIEW_SHA`. Nie przekazuj im raportu Developera, jego opisu zmian ani deklaracji o testach. Poczekaj na oba raporty.
+### 6. Review i QA równolegle (FULL)
+W jednej wiadomości uruchom `code-reviewer` (brief R-FULL) i `qa-tester` (brief Q-FULL) na tym samym `REVIEW_SHA`. Nie przekazuj im raportu Developera, jego opisu zmian ani deklaracji o testach. Poczekaj na oba raporty.
 
 ### 7. Triage
 - **Blokujące:** każde P0/P1 z review i QA oraz każde niespełnione AC. Tylko one uruchamiają rundę poprawek.
@@ -86,78 +105,53 @@ W jednej wiadomości uruchom `code-reviewer` (brief R1) i `qa-tester` (brief Q1)
 - Połącz duplikaty. Uwag nie odrzucasz po cichu: gdy masz wątpliwość, poproś autora o dowód albo zapytaj użytkownika.
 - `BLOCKED` od QA to nie PASS. Usuń przyczynę po swojej stronie (profil, porty) albo eskaluj.
 
-### 8. Poprawki i ponowne sprawdzenie
-- Wznów `developer` przez `SendMessage` (brief D2), z uwagami w brzmieniu autorów.
+### 8. Poprawki i ponowne sprawdzenie (DELTA)
+- Zapisz `ROUND <k>` i wznów `developer` przez `SendMessage` (brief D2), z uwagami w brzmieniu autorów.
 - Uwagę oznaczoną przez Developera jako `SPORNE` przekaż autorowi jako twierdzenie do weryfikacji albo zapytaj użytkownika.
-- Nowy SHA: krok 5, potem równolegle wznów `code-reviewer` (R2) i `qa-tester` (Q2) na nowym SHA. Jeśli poprawki zmieniły projekt rozwiązania, zamiast R2 uruchom nowego `code-reviewer` z briefem R1 na pełnym diffie.
+- Nowy SHA: krok 5, potem równolegle wznów `code-reviewer` (R-DELTA) i `qa-tester` (Q-DELTA) na nowym SHA.
+- Jeśli poprawki istotnie zmieniły architekturę albo zakres, zamiast R-DELTA uruchom nowego `code-reviewer` z briefem R-FULL. Agent może też sam przejść na FULL i poda powód. QA w trybie FULL tylko z uzasadnieniem.
 - Jeśli wznowienie się nie uda, uruchom nowego agenta z tym samym briefem oraz ścieżką worktree, gałęzią i historią uwag.
 - **Limit: 3 rundy poprawek** (łącznie z poprawkami po kontrolach i CI). Po 3. rundzie z otwartymi blokującymi albo gdy ta sama uwaga wraca po 2 rundach, eskalujesz: stan, otwarte uwagi, opcje.
 
-### 9. Kontrole lokalne
-- Na finalnym SHA uruchom sam `make check` w worktree Developera, z timeoutem 600000 ms albo w tle. Najpierw sprawdź, że `docker compose config | head -1` w tym katalogu zwraca `name: fd-<slug>-dev`. Po kontroli `git -C <worktree> status --porcelain` ma być puste.
-- Kontrole prod: zobacz sekcję „Izolacja Dockera”. W raporcie zaznacz, że weryfikuje je CI.
-- Porażka oznacza rundę poprawek.
+### 9. Kontrole lokalne bez duplikowania
+- **Nie powtarzasz `make check`**, gdy jednocześnie:
+  1. raport Developera podaje `Pełne make check @ <SHA>: PASS`,
+  2. `<SHA>` to finalny `REVIEW_SHA` i równa się `git rev-parse feature/<slug>` (brak późniejszych commitów),
+  3. raport podaje czysty `git status` po kontroli, a `git -C <worktree> status --porcelain` jest teraz puste.
+- W każdym innym przypadku (brak wyniku, inny SHA, zmiany po kontroli, `FAIL`) uruchamiasz `make check` sam w worktree Developera. Najpierw sprawdź, że `docker compose config | head -1` zwraca tam `name: fd-<slug>-dev`. Ustaw timeout 600000 ms albo uruchom w tle. Po kontroli `git status --porcelain` ma być puste.
+- Każde pełne `make check` zapisujesz jako `MAKE_CHECK`. Porażka oznacza rundę poprawek.
+- CI (krok 10) pozostaje niezależną i obowiązkową kontrolą.
 
 ### 10. Push, draft PR i CI (bramka)
-- Zapytaj przez `AskUserQuestion`, podając gałąź, SHA i zakres zgody: push gałęzi bez force, draft PR do `main`, aktualizacje opisu PR i push kolejnych commitów z poprawkami do tej gałęzi. Przy odmowie przejdź do kroku 11 bez PR.
+- Zapytaj przez `AskUserQuestion` (`ASK`/`ANSWER`), podając gałąź, SHA i zakres zgody: push gałęzi bez force, draft PR do `main`, aktualizacje opisu PR i push kolejnych commitów z poprawkami do tej gałęzi. Przy zmianach wpływających na obrazy produkcyjne dołącz ręczne uruchomienie `production-image`. Przy odmowie przejdź do kroku 11 bez PR.
 - Po zgodzie wykonaj `git push -u origin feature/<slug>` i `gh pr create --draft --base main --head feature/<slug> --title "…" --body-file <plik tymczasowy poza repo>`.
-- CI śledź przez `gh pr checks <nr> --watch` w tle albo narzędziami PR i CI środowiska. Przy porażce przeczytaj `gh run view <id> --log-failed`. Błąd w kodzie oznacza rundę poprawek, a po nowym pushu CI od nowa. Porażkę niezwiązaną z kodem zgłaszasz użytkownikowi i nie ponawiasz jej sam.
+- **Quality gates** (`make check`) uruchamiają się automatycznie dla PR i są obowiązkowe. Śledź je przez `gh pr checks <nr> --watch` w tle albo narzędziami PR i CI środowiska.
+- **Production image** (`make check-prod`): przy zmianach wpływających na obrazy produkcyjne i zgodzie użytkownika uruchom `gh workflow run ci.yml --ref feature/<slug>` i śledź ten przebieg (`gh run list --workflow ci.yml --event workflow_dispatch --branch feature/<slug>`). Bez takich zmian go nie uruchamiasz i piszesz to w raporcie.
+- Przy porażce przeczytaj `gh run view <id> --log-failed`. Błąd w kodzie oznacza rundę poprawek, a po nowym pushu CI od nowa. Porażkę niezwiązaną z kodem zgłaszasz użytkownikowi i nie ponawiasz jej sam.
 
 ### 11. Raport i gotowość PR
-- Opis PR (`gh pr edit <nr> --body-file …`) i odpowiedź w rozmowie wypełnij według szablonu raportu.
-- `gh pr ready <nr>` wykonujesz tylko wtedy, gdy na tym samym SHA (`gh pr view <nr> --json headRefOid`) jednocześnie: ostatni review `APPROVE`, ostatnie QA `PASS`, `make check` zielony i wszystkie checki CI zielone. Inaczej PR zostaje draftem, a raport mówi dlaczego.
+- Przeczytaj `${CLAUDE_SKILL_DIR}/reports.md`. Według niego wypełnij opis PR (`gh pr edit <nr> --body-file …`) i raport `AGENTIC SDLC — EXECUTION REPORT`.
+- `gh pr ready <nr>` wykonujesz tylko wtedy, gdy na tym samym SHA (`gh pr view <nr> --json headRefOid`) jednocześnie: ostatni review `APPROVE`, ostatnie QA `PASS`, pełne `make check` `PASS` (Developera według kroku 9 albo Twoje) i zielone Quality gates. Przy zmianach wpływających na obrazy produkcyjne także zielony ręczny `production-image` albo wyraźna decyzja użytkownika, że go pomija. Inaczej PR zostaje draftem, a raport mówi dlaczego.
 
 ### 12. Decyzja użytkownika
-Zakończ raportem i pytaniem o decyzję w sprawie merge. Nie scalasz. Merge wykonujesz tylko na wyraźne polecenie użytkownika wydane po raporcie.
+Zapisz `END`. Zakończ raportem (z `EXECUTION REPORT`) i pytaniem o decyzję w sprawie merge. Nie scalasz. Merge wykonujesz tylko na wyraźne polecenie użytkownika wydane po raporcie.
 
 ## Briefy
 
 Subagent widzi tylko brief i swoją definicję. Brief ma być kompletny i zawierać wyłącznie dane.
 
-- **D1 (developer):** zadanie; zaakceptowany plan (zakres, poza zakresem, obszary, projekt); `AC-1..n`; dokumenty do przeczytania; gałąź `feature/<slug>`; profil `.env` (dev).
-- **D2 (developer, poprawki):** „Runda poprawek n/3”; worktree, gałąź, ostatni SHA; uwagi blokujące (ID, treść i kroki odtworzenia w brzmieniu autora); opcjonalnie nieblokujące P2 do dołączenia.
-- **R1 (code-reviewer):** zadanie; plan (projekt i zakres); `AC-1..n`; dokumenty reguł; `BASE`; `REVIEW_SHA`.
-- **R2 (code-reviewer, re-review):** poprzedni i nowy SHA; jego otwarte uwagi; ewentualne argumenty `SPORNE` oznaczone jako twierdzenia Developera do weryfikacji.
-- **Q1 (qa-tester):** zadanie; `AC-1..n`; dokumenty (spec, openapi, AGENTS.md aplikacji); `BASE`; `REVIEW_SHA`; profil `.env` (qa); obszary ryzyka z planu.
-- **Q2 (qa-tester, retest):** nowy SHA; ścieżka jego worktree; jego otwarte błędy.
+- **D1 (developer):** zadanie; zaakceptowany plan (zakres, poza zakresem, obszary, decyzje); `AC-1..n`; dokumenty do przeczytania; gałąź `feature/<slug>`; profil `.env` (dev).
+- **D2 (developer, poprawki):** „Runda poprawek k/3”; worktree, gałąź, ostatni SHA; uwagi blokujące (ID, treść i kroki odtworzenia w brzmieniu autora); opcjonalnie nieblokujące P2 do dołączenia.
+- **R-FULL (code-reviewer):** `TRYB: FULL`; zadanie; plan (decyzje i zakres); `AC-1..n`; dokumenty reguł; `BASE`; `REVIEW_SHA`.
+- **R-DELTA (code-reviewer):** `TRYB: DELTA`; `BASE`; poprzedni SHA; nowy SHA; jego otwarte uwagi; ewentualne argumenty `SPORNE` oznaczone jako twierdzenia Developera do weryfikacji.
+- **Q-FULL (qa-tester):** `TRYB: FULL`; zadanie; `AC-1..n`; dokumenty (spec, openapi, AGENTS.md aplikacji); `BASE`; `REVIEW_SHA`; profil `.env` (qa); obszary ryzyka z planu.
+- **Q-DELTA (qa-tester):** `TRYB: DELTA`; poprzedni i nowy SHA; ścieżka jego worktree; jego otwarte błędy.
 
 ## Blok stanu
 
 Po każdym kroku dopisz w odpowiedzi aktualny blok, żeby po kompaktowaniu kontekstu było wiadomo, gdzie jesteś:
 ```
-[feature-delivery] krok <n> | runda <k>/3 | feature/<slug>
-SHA <sha> | BASE <sha> | review <werdykt@sha> | QA <werdykt@sha> | make check <wynik@sha> | CI <stan> | PR <url|brak>
-developer=<id> (<worktree>) | code-reviewer=<id> | qa-tester=<id> (<worktree>)
-```
-
-## Szablon raportu (opis PR)
-
-```
-## Podsumowanie
-<co i dlaczego, link do planu/AC>
-
-## Kryteria akceptacji
-| AC | Testy (plik::test) | Scenariusze QA | Wynik |
-(AC bez testu albo bez scenariusza QA = otwarte, nie sukces)
-
-## Code review
-<werdykt per runda, uwagi zamknięte, otwarte P2/P3>
-
-## QA
-<werdykt per runda, scenariusze, otwarte P2/P3, czego nie przetestowano>
-
-## Kontrole
-- make check @ <SHA>: <wynik>
-- CI: <link, wynik @ SHA>
-- Kontrole prod: job CI production-image (lokalnie nieuruchamiane: brak izolacji projektu Compose)
-
-## Odstępstwa od planu i ryzyka
-
-## Sprzątanie (do wykonania przez użytkownika)
-<worktree, gałęzie lokalne, projekty Compose fd-<slug>-* i ich wolumeny, z gotowymi komendami>
-
-## Decyzja
-Merge czeka na decyzję użytkownika.
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
+[feature-delivery] krok <n> | runda <k>/3 | feature/<slug> | log /tmp/feature-delivery-${CLAUDE_SESSION_ID}.log
+SHA <sha> | BASE <sha> | review <werdykt/tryb@sha> | QA <werdykt/tryb@sha> | make check <wynik@sha, kto> | CI <stan> | PR <url|brak>
+developer=<id> (<worktree>) | code-reviewer=<id> | qa-tester=<id> (<worktree>) | uruchomienia dev/review/qa <n>/<n>/<n>
 ```
