@@ -19,10 +19,10 @@ Edukacyjny system e-commerce rozwijany jako monorepo. Projekt służy do nauki A
 | `infra/docker/backend` | Obraz backendu (FrankenPHP): Dockerfile, Caddyfile, PHP ini, entrypoint prod |
 | `infra/docker/admin` | Obraz admina: Vite dev (HMR) i produkcyjny statyczny Caddy |
 | `infra/docker/store` | Obraz sklepu: Next.js dev (HMR) i produkcyjny serwer standalone |
-| `infra/docker/keycloak` | Obraz Keycloaka (dostawca tożsamości): na razie tylko dev (`start-dev`, import realmów) |
+| `infra/docker/keycloak` | Obraz Keycloaka (dostawca tożsamości): dev (`start-dev`) i produkcyjny (`kc.sh build`, `start --optimized`), oba z importem realmów |
 | `infra/keycloak/realms` | Definicje realmów `store` i `admin` (import przy pierwszym starcie, sekrety jako placeholdery `${ENV}`) |
-| `infra/edge` | Edge proxy (Caddy): jedyny publiczny punkt wejścia produkcji, TLS i routing |
-| `infra/scripts` | `check-prod-stack.sh` (cała topologia, z tymczasowym plikiem Compose), `check-prod-admin.sh`, `check-prod-store.sh`; dev: `keycloak-db.sh`, `keycloak-dev-seed.sh`, `check-dev-infra.sh` |
+| `infra/edge` | Edge proxy (Caddy): jedyny publiczny punkt wejścia produkcji, TLS i routing (`STORE_DOMAIN`, `ADMIN_DOMAIN`, `AUTH_DOMAIN`) |
+| `infra/scripts` | `check-prod-stack.sh` (cała topologia, z tymczasowym plikiem Compose), `check-prod-admin.sh`, `check-prod-store.sh`; baza Keycloaka w dev i prod: `keycloak-db.sh`; dev: `keycloak-dev-seed.sh`, `check-dev-infra.sh` |
 | `docs` | Specyfikacje, roadmapa, ADR |
 | `.claude` | Wspólna konfiguracja Claude Code: skill `/feature-delivery`, subagenci, reguły `ask` (sekcja „Agentic SDLC”) |
 | katalog główny | `compose*.yaml`, `Makefile`, pnpm workspace (`package.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml`), `.node-version`, `AGENTS.md` |
@@ -99,13 +99,13 @@ Sklep pokaże produkt „Kubek” z ceną brutto 49,20 zł wyliczoną przez back
 
 ### Keycloak i Redis sesji (dev)
 
-Środowisko dev zawiera dostawcę tożsamości i magazyn sesji sklepu. Backend dostaje zmienne `OIDC_STORE_*` i `OIDC_ADMIN_*` (jeszcze nieużywane). Sklep dostaje komplet zmiennych trybu `STORE_AUTH_MODE=oidc` z działającymi wartościami dev: `STORE_ENVIRONMENT`, `STORE_PUBLIC_URL`, `STORE_OIDC_ISSUER` (dokładnie claim `iss`), `STORE_OIDC_INTERNAL_URL` (`http://keycloak:8080/realms/store`), `STORE_OIDC_CLIENT_ID`, `STORE_OIDC_CLIENT_SECRET`, `STORE_REDIS_URL` i `STORE_SESSION_ENC_KEYS` (`kid:base64(32 bajty)`, pierwszy aktywny). Żadna usługa aplikacji nie zależy od Keycloaka ani Redisa (`depends_on`): backend i katalog sklepu działają, gdy oba są zatrzymane. Obie usługi są tylko w `compose.override.yaml`. Topologia prod ich nie zawiera.
+Środowisko dev zawiera dostawcę tożsamości i magazyn sesji sklepu. Backend dostaje zmienne `OIDC_STORE_*` i `OIDC_ADMIN_*` (jeszcze nieużywane). Sklep dostaje komplet zmiennych trybu `STORE_AUTH_MODE=oidc` z działającymi wartościami dev: `STORE_ENVIRONMENT`, `STORE_PUBLIC_URL`, `STORE_OIDC_ISSUER` (dokładnie claim `iss`), `STORE_OIDC_INTERNAL_URL` (`http://keycloak:8080/realms/store`), `STORE_OIDC_CLIENT_ID`, `STORE_OIDC_CLIENT_SECRET`, `STORE_REDIS_URL` i `STORE_SESSION_ENC_KEYS` (`kid:base64(32 bajty)`, pierwszy aktywny). Żadna usługa aplikacji nie zależy od Keycloaka ani Redisa (`depends_on`): backend i katalog sklepu działają, gdy oba są zatrzymane. Keycloak dev jest zdefiniowany w `compose.override.yaml`. Redis sesji ma wspólną definicję z ACL w `compose.yaml`, a hasła i port dev w `compose.override.yaml`. Obie usługi działają też w topologii prod (sekcja „Topologia produkcyjna”).
 
 **Keycloak 26.8.0** (`infra/docker/keycloak`, `start-dev`) działa na `http://localhost:${KEYCLOAK_PORT:-8180}`. Port zarządzania 9000 (`/health/ready`, healthcheck) nie jest publikowany.
 
 - **Issuer** jest publiczny: `http://localhost:<KEYCLOAK_PORT>/realms/<realm>` (`KC_HOSTNAME`). Usługi w sieci Compose pobierają discovery z `http://keycloak:8080/realms/<realm>/.well-known/openid-configuration` i dostają w nim endpointy back-channel (token, JWKS) pod `http://keycloak:8080` (`KC_HOSTNAME_BACKCHANNEL_DYNAMIC`), z tym samym publicznym issuerem.
 - **Baza:** osobna baza i rola `keycloak` w tym samym PostgreSQL. Tworzy je `infra/scripts/keycloak-db.sh`, uruchamiany przez `make up` po starcie bazy, a przed resztą usług. Skrypt jest idempotentny: tworzy tylko brakujące obiekty, przy każdym uruchomieniu ustawia hasło z `KEYCLOAK_DB_PASSWORD` i odbiera grupie `PUBLIC` prawa `CONNECT` i `TEMPORARY` na bazach `keycloak`, `app` i `postgres`. Rola `keycloak` łączy się więc spośród nich tylko z własną bazą. Superużytkownik aplikacji i `pg_isready` nie są tym ograniczeni. Baza testowa `app_test` zachowuje `CONNECT` dla `PUBLIC`, bo testy backendu łączą się z nią rolami, które same tworzą. Rola `keycloak` nie odczyta tam żadnej tabeli i niczego nie utworzy. Skrypt działa też na istniejącym wolumenie i niczego nie usuwa.
-- **Realmy** (`infra/keycloak/realms/*.json`) są importowane przy starcie (`--import-realm`) tylko wtedy, gdy jeszcze nie istnieją. Zmiana pliku nie zmienia więc istniejącego realmu: obowiązuje w nowym projekcie Compose albo po usunięciu realmu w konsoli. Sekrety i adresy są placeholderami Keycloaka (`${STORE_OIDC_CLIENT_SECRET}`, `${STORE_PUBLIC_URL}` …), które Compose przekazuje do kontenera.
+- **Realmy** (`infra/keycloak/realms/*.json`) są importowane przy starcie (`--import-realm`) tylko wtedy, gdy jeszcze nie istnieją. Zmiana pliku nie zmienia więc istniejącego realmu: obowiązuje w nowym projekcie Compose albo po usunięciu realmu w konsoli. Dotyczy to np. wyłączenia grantu hasłem dla `admin-cli` w realmie `admin`: istniejące środowisko dev dostanie je dopiero po odtworzeniu bazy Keycloaka. Sekrety i adresy są placeholderami Keycloaka (`${STORE_OIDC_CLIENT_SECRET}`, `${STORE_PUBLIC_URL}` …), które Compose przekazuje do kontenera.
 
 | Realm | Konfiguracja |
 |---|---|
@@ -124,10 +124,10 @@ Sklep pokaże produkt „Kubek” z ceną brutto 49,20 zł wyliczoną przez back
 **Redis 8.8.2** (`redis-session`) przechowuje sesje sklepu. AOF jest włączony (`everysec`), bez snapshotów RDB, z limitem `maxmemory 256mb` i polityką `noeviction`, więc przy pełnej pamięci zapis zwraca błąd i żadna sesja nie znika po cichu. Dane leżą w wolumenie `redis_session_data`. Plik ACL powstaje przy starcie z haseł w zmiennych środowiskowych:
 
 - `default`: wyłączony, więc polecenie bez logowania zwraca `NOAUTH`,
-- `store`: tylko klucze `store:*` i polecenia kodu sesji sklepu: `eval`, `evalsha`, `multi`, `exec`, `get`, `getdel`, `set`, `del`, `hset`, `hgetall`, `expire`, `pexpire`, `sadd`, `smembers`, `srem`, `ping` oraz handshake node-redis (`hello`, `auth`, `client setinfo`); `CLIENT LIST`, `ACL`, `CONFIG`, `KEYS` i `FLUSHALL` są zabronione,
+- `store`: tylko klucze `store:*` i polecenia magazynu sesji sklepu, wywoływane bezpośrednio i w skryptach Lua (`EVAL`): `eval`, `evalsha`, `multi`, `exec`, `get`, `getdel`, `set`, `del`, `exists`, `hget`, `hset`, `hgetall`, `hincrby`, `pexpire`, `sadd`, `smembers`, `srem`, `ping` oraz handshake node-redis (`hello`, `auth`, `client setinfo`); `CLIENT LIST`, `ACL`, `CONFIG`, `KEYS` i `FLUSHALL` są zabronione,
 - `ops`: administracja i healthcheck, np. `docker compose exec redis-session sh -c 'REDISCLI_AUTH="$REDIS_OPS_PASSWORD" redis-cli --user ops INFO memory'`.
 
-**Sekrety dev** mają wartości domyślne z prefiksem `dev-only-`, zapisane w `compose.override.yaml`. Można je nadpisać w `.env` lub w środowisku: `KEYCLOAK_DB_PASSWORD`, `KEYCLOAK_ADMIN_PASSWORD`, `STORE_OIDC_CLIENT_SECRET`, `ADMIN_OIDC_CLIENT_SECRET`, `REDIS_SESSION_PASSWORD`, `REDIS_OPS_PASSWORD`, `STORE_SESSION_ENC_KEYS`. Hasła Redisa nie mogą zawierać białych znaków. Hasło użytkownika `store` trafia bez kodowania do `STORE_REDIS_URL`, więc może zawierać tylko znaki bezpieczne w URL (bez `@ : / ? # %`). Nigdy nie używaj tych wartości poza dev.
+**Sekrety dev** mają wartości domyślne z prefiksem `dev-only-`, zapisane w `compose.override.yaml`. Można je nadpisać w `.env` lub w środowisku: `KEYCLOAK_DB_PASSWORD`, `KEYCLOAK_ADMIN_PASSWORD`, `STORE_OIDC_CLIENT_SECRET`, `ADMIN_OIDC_CLIENT_SECRET`, `REDIS_SESSION_PASSWORD`, `REDIS_OPS_PASSWORD`, `STORE_SESSION_ENC_KEYS` (klucz dev ma identyfikator `dev-only-1`). Hasła Redisa nie mogą zawierać białych znaków. Hasło użytkownika `store` trafia bez kodowania do `STORE_REDIS_URL`, więc może zawierać tylko znaki bezpieczne w URL (bez `@ : / ? # %`). Nigdy nie używaj tych wartości poza dev.
 
 **E-mail w dev:** środowisko nie ma serwera SMTP. Samodzielna rejestracja w realmie `store` (w Keycloaku 26 formularz bez hasła, potem wymagane VERIFY_EMAIL i UPDATE_PASSWORD) nie wyśle więc maila i nie da się jej dokończyć. Testy ręczne i automatyczne używają użytkowników z `make keycloak-dev-seed`.
 
@@ -207,8 +207,9 @@ Inna wersja Node niż w `.node-version` kończy `pnpm install` błędem (`engine
 | `make check` | Wszystkie bramki jakości: obowiązkowe przed commitem |
 | `make contract-lint` | Lint kontraktu API `docs/api/openapi.yaml` (Redocly) |
 | `make build-prod` | Budowa obrazów produkcyjnych (bez sekretów) |
-| `make check-prod` | Kontrola obrazów admina (8081) i sklepu (8082) oraz całej topologii prod z edge (8080/8443) |
-| `make edge-build-prod` / `make stack-check-prod` | Obraz edge / kontrola całej topologii prod |
+| `make check-prod` | Kontrola obrazów admina (8081) i sklepu (8082), całej topologii prod z edge (8080/8443) i przepływu logowania (`stack-check-auth`) |
+| `make edge-build-prod` / `make keycloak-build-prod` / `make stack-check-prod` | Obraz edge / obraz Keycloaka / kontrola całej topologii prod |
+| `make stack-check-auth` | Kontrola logowania w sklepie end to end (`infra/scripts/check-auth-flow.sh`); dopóki skryptu nie ma, cel kończy się sukcesem z komunikatem |
 | `make backend-composer c="…"` / `make backend-console c="…"` | Composer i `bin/console` w kontenerze |
 | `make backend-migrate` | Migracje bazy danych (nie są uruchamiane automatycznie) |
 | `make backend-test` | PHPUnit (suity `unit` i `functional`), najpierw `make backend-db-test` |
@@ -284,16 +285,29 @@ W obu przypadkach aplikacja jest w kontenerze w `/app`. W żadnym środowisku ko
 Internet ──80/443──► edge (Caddy, TLS)
                       ├─ STORE_DOMAIN /api/* ──┐
                       ├─ ADMIN_DOMAIN /api/* ──┴─► backend :80 ──► database
-                      ├─ STORE_DOMAIN /*      ───► store :3000
-                      └─ ADMIN_DOMAIN /*      ───► admin :8080
+                      ├─ STORE_DOMAIN /*      ───► store :3000 ──(sieć sessions)──► redis-session
+                      ├─ ADMIN_DOMAIN /*      ───► admin :8080
+                      └─ AUTH_DOMAIN  /realms/{store,admin}/*, /resources/*
+                                              ───► keycloak :8080 ──► database (baza keycloak)
 ```
 
 - **edge** (`infra/edge`, obraz `ecommerce-edge`) kończy TLS (automatyczne certyfikaty) i kieruje ruch:
   - `https://STORE_DOMAIN/api/*` i `https://ADMIN_DOMAIN/api/*` → backend, z usuniętym prefiksem `/api` (kontrakt OpenAPI: `servers: /api`),
   - pozostałe ścieżki → sklep albo admin,
+  - na `STORE_DOMAIN` ścieżki wewnętrzne `/api/admin/*` i `/auth/backchannel-logout` (także z `;` i w dowolnej wielkości liter) zwracają 404 (API admina jest na `ADMIN_DOMAIN`, a back-channel logout Keycloak woła w sieci: `http://store:3000/auth/backchannel-logout`),
+  - `https://AUTH_DOMAIN` → Keycloak, tylko to, czego potrzebuje przeglądarka: `/realms/store/*`, `/realms/admin/*` i `/resources/*`. W tych realmach endpointy serwer-serwer (`protocol/openid-connect/token`, `userinfo`, `revoke`, `token/introspect`, `ext/*`, `auth/device`, `clients-registrations/*`) zwracają 404. Caddy dopasowuje ścieżkę już zdekodowaną i oczyszczoną (bez pustych segmentów i `.`/`..`), więc zapisy typu `//token` czy `x/../token` trafiają w tę samą blokadę; ścieżki ze znakami, których Caddy nie usuwa (`;` parametrów macierzowych, `\`), też zwracają 404. JWKS (`certs`) i discovery są publiczne. Konsola administracyjna (`/admin/*`), realm `master`, `/health`, `/metrics` i `/` zwracają 404,
   - HTTP przekierowuje na HTTPS (308), a nieznane domeny nie są obsługiwane.
-- **Sieć wewnętrzna:** backend, sklep, admin i PostgreSQL nie publikują portów. Backend działa za edge na zwykłym HTTP `:80`.
-- **Uprawnienia:** wszystkie kontenery aplikacji działają jako uid 1000. Edge, sklep i admin mają `read_only`, `cap_drop: ALL` i `no-new-privileges`.
+- **Sieć wewnętrzna:** backend, sklep, admin, Keycloak, PostgreSQL i Redis nie publikują portów (port zarządzania Keycloaka 9000 także nie). Backend działa za edge na zwykłym HTTP `:80`. Redis sesji jest wyłącznie w sieci `sessions` (`internal`), którą współdzieli tylko ze sklepem.
+- **Tożsamość:** issuer tokenów to `https://AUTH_DOMAIN/realms/<realm>`. Usługi w sieci (sklep, backend) pobierają discovery, tokeny i JWKS z `http://keycloak:8080/realms/<realm>` (`KC_HOSTNAME_BACKCHANNEL_DYNAMIC`). Wymiana kodu na tokeny jest więc możliwa tylko z wnętrza sieci. Keycloak ufa nagłówkom `X-Forwarded-*` od edge (`KC_PROXY_HEADERS=xforwarded`). Konsola administracyjna ma adres niepubliczny (`KC_HOSTNAME_ADMIN=http://localhost:8080`), a administracja odbywa się przez `kcadm.sh` w kontenerze:
+
+  ```bash
+  docker compose -f compose.yaml -f compose.prod.yaml exec keycloak bash -c \
+    'KC_CLI_PASSWORD="$KC_BOOTSTRAP_ADMIN_PASSWORD" /opt/keycloak/bin/kcadm.sh config credentials \
+       --config /tmp/kcadm.config --server http://localhost:8080 --realm master --user "$KC_BOOTSTRAP_ADMIN_USERNAME" \
+     && /opt/keycloak/bin/kcadm.sh get realms/store --config /tmp/kcadm.config'
+  ```
+
+- **Uprawnienia:** kontenery aplikacji działają jako uid 1000, Keycloak jako `keycloak` (uid 1000), Redis jako `redis` (uid 999). Edge, sklep, admin, Keycloak i Redis mają `read_only` (z tmpfs na pliki tymczasowe), `cap_drop: ALL` i `no-new-privileges`.
 
 ### Uruchomienie produkcyjne
 
@@ -305,7 +319,13 @@ Obrazy nie zawierają sekretów ani wartości z `.env`. Konfigurację podaje si�
 | `POSTGRES_PASSWORD` | tak | Hasło bazy, przekazywane aplikacji jako `DATABASE_PASSWORD` (dowolne znaki, bez kodowania URL) |
 | `STORE_DOMAIN` | tak | Domena sklepu, np. `shop.example.com` |
 | `ADMIN_DOMAIN` | tak | Domena panelu, np. `admin.example.com` |
-| `OIDC_STORE_ISSUER`, `OIDC_ADMIN_ISSUER` | tak | Dokładny `iss` tokenów realmu `store` / `admin`, np. `https://auth.example.com/realms/store` |
+| `AUTH_DOMAIN` | tak | Domena Keycloaka (issuer `https://AUTH_DOMAIN/realms/<realm>`), np. `auth.example.com`. Zmiana domeny zmienia `iss` tokenów |
+| `KEYCLOAK_DB_PASSWORD` | tak | Hasło roli `keycloak` w PostgreSQL (ustawia je `infra/scripts/keycloak-db.sh`) |
+| `KEYCLOAK_ADMIN_USERNAME`, `KEYCLOAK_ADMIN_PASSWORD` | tak | Tymczasowy administrator Keycloaka (realm `master`) tworzony przy pierwszym starcie |
+| `STORE_OIDC_CLIENT_SECRET`, `ADMIN_OIDC_CLIENT_SECRET` | tak | Sekrety klientów `store-bff` i `admin-bff`, importowane do realmów i przekazywane sklepowi |
+| `REDIS_SESSION_PASSWORD`, `REDIS_OPS_PASSWORD` | tak | Hasła użytkowników `store` i `ops` Redisa sesji; bez białych znaków, hasło `store` tylko ze znaków bezpiecznych w URL (trafia do `STORE_REDIS_URL`) |
+| `STORE_SESSION_ENC_KEYS` | tak | Klucze szyfrowania sesji sklepu `kid:base64(32 bajty)[,…]`, pierwszy aktywny, np. `k1:$(openssl rand -base64 32)` |
+| `OIDC_STORE_ISSUER`, `OIDC_ADMIN_ISSUER` | tak | Dokładny `iss` tokenów realmu `store` / `admin`, np. `https://auth.example.com/realms/store` (`https://AUTH_DOMAIN/realms/<realm>`) |
 | `OIDC_STORE_DISCOVERY_URL`, `OIDC_ADMIN_DISCOVERY_URL` | tak | Adres realmu w sieci Compose, zakończony `/`, np. `http://keycloak:8080/realms/store/` |
 | `OIDC_STORE_AUDIENCE`, `OIDC_ADMIN_AUDIENCE` | tak | Wymagany `aud`: `store-api` / `admin-api` |
 | `OIDC_STORE_CLIENTS`, `OIDC_ADMIN_CLIENTS` | tak | Dozwoleni klienci (`azp`, po przecinku): `store-bff` / `admin-bff` |
@@ -313,11 +333,21 @@ Obrazy nie zawierają sekretów ani wartości z `.env`. Konfigurację podaje si�
 | `STORE_BACKEND_URL` | nie | Adres backendu dla serwera sklepu, domyślnie `http://backend:80`; pusta wartość włącza dane demo (sekcja „Sklep: katalog z API albo dane demo”) |
 | `PROD_HTTP_PORT`, `PROD_HTTPS_PORT`, `PROD_HTTP3_PORT` | nie | Porty edge na hoście (domyślnie 80/443) |
 
+Sklep dostaje w produkcji na stałe `STORE_ENVIRONMENT=production`, `STORE_AUTH_MODE=oidc`, `STORE_OIDC_CLIENT_ID=store-bff` i `STORE_OIDC_INTERNAL_URL=http://keycloak:8080/realms/store`, a z powyższych zmiennych `STORE_PUBLIC_URL=https://STORE_DOMAIN`, `STORE_OIDC_ISSUER=https://AUTH_DOMAIN/realms/store`, `STORE_OIDC_CLIENT_SECRET`, `STORE_REDIS_URL` i `STORE_SESSION_ENC_KEYS`.
+
+Kolejność startu: baza, potem rola i baza Keycloaka (`keycloak-db.sh`, idempotentny), potem reszta. Realmy importują się przy pierwszym starcie Keycloaka; istniejące realmy nie są nadpisywane.
+
 ```bash
 make build-prod
-export APP_SECRET=… POSTGRES_PASSWORD=… STORE_DOMAIN=shop.example.com ADMIN_DOMAIN=admin.example.com
-export OIDC_STORE_ISSUER=… OIDC_STORE_DISCOVERY_URL=… OIDC_STORE_AUDIENCE=store-api OIDC_STORE_CLIENTS=store-bff
-export OIDC_ADMIN_ISSUER=… OIDC_ADMIN_DISCOVERY_URL=… OIDC_ADMIN_AUDIENCE=admin-api OIDC_ADMIN_CLIENTS=admin-bff
+export APP_SECRET=… POSTGRES_PASSWORD=… STORE_DOMAIN=shop.example.com ADMIN_DOMAIN=admin.example.com AUTH_DOMAIN=auth.example.com \
+  KEYCLOAK_DB_PASSWORD=… KEYCLOAK_ADMIN_USERNAME=… KEYCLOAK_ADMIN_PASSWORD=… STORE_OIDC_CLIENT_SECRET=… ADMIN_OIDC_CLIENT_SECRET=… \
+  REDIS_SESSION_PASSWORD=… REDIS_OPS_PASSWORD=… STORE_SESSION_ENC_KEYS=…
+export OIDC_STORE_ISSUER=https://auth.example.com/realms/store OIDC_STORE_DISCOVERY_URL=http://keycloak:8080/realms/store/ \
+  OIDC_STORE_AUDIENCE=store-api OIDC_STORE_CLIENTS=store-bff
+export OIDC_ADMIN_ISSUER=https://auth.example.com/realms/admin OIDC_ADMIN_DISCOVERY_URL=http://keycloak:8080/realms/admin/ \
+  OIDC_ADMIN_AUDIENCE=admin-api OIDC_ADMIN_CLIENTS=admin-bff
+docker compose -f compose.yaml -f compose.prod.yaml up --detach --wait database
+DOCKER_COMP="docker compose -f compose.yaml -f compose.prod.yaml" ./infra/scripts/keycloak-db.sh
 docker compose -f compose.yaml -f compose.prod.yaml up --detach --wait
 ```
 
@@ -331,11 +361,11 @@ Dev zajmuje `127.0.0.1:80/443`, więc gdy oba środowiska działają na jednym h
 Każda aplikacja i edge to osobny obraz. Wdrożenie jednej z nich nie restartuje pozostałych, bo edge rozwiązuje adresy usług przy każdym połączeniu:
 
 ```bash
-make store-build-prod      # albo backend-, admin-, edge-build-prod
+make store-build-prod      # albo backend-, admin-, edge-, keycloak-build-prod
 docker compose -f compose.yaml -f compose.prod.yaml up --detach --no-deps --wait store
 ```
 
-Topologia nie zakłada jednego hosta: edge kieruje ruch po nazwach usług (`backend`, `store`, `admin`). Przy rozdzieleniu aplikacji na osobne hosty zmienia się tylko adres upstream w `infra/edge/Caddyfile`.
+Tak samo wdraża się `keycloak` i `redis-session` (Redis po odtworzeniu kontenera zachowuje dane w wolumenie `redis_session_data`). Topologia nie zakłada jednego hosta: edge kieruje ruch po nazwach usług (`backend`, `store`, `admin`, `keycloak`). Przy rozdzieleniu aplikacji na osobne hosty zmienia się tylko adres upstream w `infra/edge/Caddyfile`.
 
 ### Migracje w produkcji
 
@@ -386,15 +416,19 @@ Obraz sprawdza osobno `make store-check-prod` na `127.0.0.1:8082` (bez backendu 
 
 `make check-prod` uruchamia kolejno:
 - `make admin-check-prod` i `make store-check-prod` (opisane wyżej),
-- `make stack-check-prod`, który uruchamia całą topologię (edge, backend, sklep, admin, PostgreSQL) w tymczasowym projekcie `ecommerce-prod-check`, z edge na portach 8080/8443 (zmiana: `CHECK_PROD_HTTP_PORT`, `CHECK_PROD_HTTPS_PORT`), obok działającego dev.
+- `make stack-check-prod`, który uruchamia całą topologię (edge, backend, sklep, admin, Keycloak, Redis sesji, PostgreSQL) w tymczasowym projekcie `ecommerce-prod-check`, z edge na portach 8080/8443 (zmiana: `CHECK_PROD_HTTP_PORT`, `CHECK_PROD_HTTPS_PORT`), obok działającego dev,
+- `make stack-check-auth`, który uruchamia `infra/scripts/check-auth-flow.sh` (logowanie przez BFF sklepu), gdy skrypt istnieje.
 
-Kontrola stosu używa testowych domen `store.localhost` i `admin.localhost` z lokalnym CA Caddy. Dane trzyma w tmpfs, więc nie zostawia wolumenów, a sekrety generuje na czas testu i nigdzie ich nie zapisuje. Sprawdza:
+Kontrola stosu używa testowych domen `store.localhost`, `admin.localhost` i `auth.localhost` z lokalnym CA Caddy. Dane trzyma w tmpfs, więc nie zostawia wolumenów, a sekrety generuje na czas testu i nigdzie ich nie zapisuje. Sprawdza:
 
-- **konfigurację:** odmowę startu bez `APP_SECRET`, `POSTGRES_PASSWORD`, `STORE_DOMAIN`, `ADMIN_DOMAIN` i każdej ze zmiennych `OIDC_*`,
+- **konfigurację:** odmowę startu bez `APP_SECRET`, `POSTGRES_PASSWORD`, `STORE_DOMAIN` i `ADMIN_DOMAIN` oraz bez każdej ze zmiennych tożsamości, sesji i `OIDC_*` (tabela wyżej), domyślny profil bez usług opcjonalnych, brak sekretów i hostname w obrazie Keycloaka,
 - **routing:** sklep i admin po domenie, fallback SPA, `/api/*` → backend bez prefiksu na obu domenach, ścieżki spoza `/api` zostają przy frontendzie, przekierowanie HTTP → HTTPS (308) na publiczny port, brak obsługi nieznanych domen,
 - **edge:** nagłówki (HSTS, `nosniff`, brak `Server`, `Via` i `X-Powered-By`),
 - **ekspozycję:** porty publikuje tylko edge,
-- **uprawnienia:** uid inny niż 0 we wszystkich aplikacjach, zero efektywnych capabilities w edge, sklepie i adminie,
-- **backend za edge:** `/health` przy haśle bazy ze znakami specjalnymi, 401 (nigdy 500) z `/api/me` i `/api/admin/me` bez tokenu i z odrzuconym tokenem, migracje (zaraz po starcie, przed sprawdzaniem stron), kod tylko do odczytu, 503 przy zatrzymanej bazie i powrót do 200, brak hasła w logach,
+- **uprawnienia:** uid inny niż 0 we wszystkich aplikacjach, w Keycloaku i Redisie, zero efektywnych capabilities w edge, sklepie, adminie, Keycloaku i Redisie, `read_only`, `cap_drop: ALL` i `no-new-privileges` Keycloaka i Redisa, brak portów Keycloaka (z 9000) i Redisa, sieć `sessions` tylko dla sklepu i Redisa,
+- **Redis sesji:** `NOAUTH` bez hasła, `STORE_REDIS_URL` sklepu loguje się jako `store`, skrypt Lua z `HSET`, `HINCRBY`, `EXISTS` i `HGET` na kluczu `store:*`, `NOPERM` poza `store:*` i dla `FLUSHALL`,
+- **Keycloak przez edge:** discovery obu realmów z issuerem `https://auth.localhost/realms/<realm>`, publiczny JWKS, discovery w sieci z endpointem tokenów na `http://keycloak:8080`; 404 z edge (pusta odpowiedź) dla `/`, konsoli administracyjnej, realmu `master`, `/health`, `/metrics`, publicznych endpointów serwer-serwer i ich wariantów (`//`, `..`, kodowanie, `;`, `\`, wielkie litery), a na domenie sklepu dla `/api/admin/*` i `/auth/backchannel-logout` (GET i POST, z wariantami `;`, `//` i wielkimi literami); z tokenem dostępowym `GET /api/me` przez edge zwraca 200; przekierowanie HTTP → HTTPS i HSTS,
+- **logowanie:** Authorization Code z PKCE S256 dla `store-bff` jak w przeglądarce (curl z ciasteczkami, użytkownik testowy tworzony przez `kcadm`): formularz logowania na `auth.localhost`, przekierowanie z kodem na `https://store.localhost/auth/callback`, wymiana kodu przez publiczny endpoint tokenów zwraca 404, a przez wewnętrzny `http://keycloak:8080/...` daje token z `iss` `https://auth.localhost/realms/store`, `azp` `store-bff` i `aud` `store-api`, a z tym tokenem `GET https://store.localhost/api/me` przez edge zwraca 200 (backend waliduje token z Keycloaka); publiczny `userinfo` zwraca 404 nawet z ważnym tokenem; w realmie `admin` grant hasłem przez `admin-cli` (z pominięciem OTP) jest odrzucany,
+- **backend za edge:** `/health` przy haśle bazy ze znakami specjalnymi, 401 (nigdy 500) z `/api/me` i `/api/admin/me` bez tokenu i z odrzuconym tokenem, migracje (zaraz po starcie, przed sprawdzaniem stron), kod tylko do odczytu, 503 przy zatrzymanej bazie i powrót do 200; po restarcie bazy (tmpfs, pusty klaster) ponownie `keycloak-db.sh` i restart Keycloaka; brak sekretów, haseł testowych i tokenów w logach wszystkich kontenerów,
 - **sklep z API:** pusty katalog z backendu (strona główna, lista, 404) bez oznaczeń demo i bez `robots`; przy zatrzymanym backendzie kontener sklepu zostaje zdrowy, `/healthz` zwraca 200, a strony 500,
-- **niezależne wdrożenia:** odtworzenie samego sklepu, admina, backendu i edge zostawia pozostałe kontenery nietknięte, a wszystkie trasy dalej działają.
+- **niezależne wdrożenia:** odtworzenie samego sklepu, admina, backendu, edge, Keycloaka i Redisa zostawia pozostałe kontenery nietknięte, a wszystkie trasy, discovery Keycloaka przez edge i logowanie sklepu do Redisa dalej działają.

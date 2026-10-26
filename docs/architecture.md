@@ -8,13 +8,13 @@ Główne źródło prawdy o architekturze systemu. Dokument ma dwie wyraźnie od
 
 | Komponent | Technologia | Rola |
 |---|---|---|
-| edge | Caddy (`infra/edge`) | Jedyny publiczny punkt wejścia produkcji: TLS, routing po domenie (`STORE_DOMAIN`, `ADMIN_DOMAIN`) i ścieżce ([ADR-0004](adr/0004-edge-proxy-and-production-topology.md)) |
+| edge | Caddy (`infra/edge`) | Jedyny publiczny punkt wejścia produkcji: TLS, routing po domenie (`STORE_DOMAIN`, `ADMIN_DOMAIN`, `AUTH_DOMAIN`) i ścieżce ([ADR-0004](adr/0004-edge-proxy-and-production-topology.md)) |
 | backend | Symfony, DDD + Hexagonal (`apps/backend`) | Jedyne źródło logiki biznesowej; bezstanowe REST API |
 | store | Next.js, SSR (`apps/store`) | Interfejs sklepu; katalog czyta z backendu po stronie serwera; BFF logowania klienta (OIDC, sesje w Redis) |
 | admin | React + Vite, SPA (`apps/admin`) | Interfejs administracyjny; dziś na danych demonstracyjnych, bez połączenia z API |
-| database | PostgreSQL | Dane backendu; dostęp tylko z backendu (Keycloak ma w nim osobną bazę i rolę) |
-| keycloak | Keycloak 26.8.0 (Compose dev) | Tożsamość: realmy `store` i `admin`, OIDC |
-| redis-session | Redis 8.8.2 (Compose dev) | Sesje BFF sklepu (`noeviction`, AOF, ACL) |
+| database | PostgreSQL | Dane backendu (dostęp tylko z backendu) i osobna baza `keycloak` z własną rolą |
+| keycloak | Keycloak 26.8.0 (`infra/docker/keycloak`, realmy w `infra/keycloak/realms`) | Dostawca tożsamości (OIDC): realmy `store` i `admin` |
+| redis-session | Redis 8.8.2 | Magazyn sesji sklepu (ACL, `noeviction`, AOF); dostęp tylko ze sklepu |
 
 ### Przepływy komunikacji
 
@@ -22,7 +22,8 @@ Główne źródło prawdy o architekturze systemu. Dokument ma dwie wyraźnie od
 - Store renderuje katalog na serwerze i woła backend bezpośrednio (server-to-server, `STORE_BACKEND_URL`, bez edge i bez prefiksu `/api`) ([ADR-0009](adr/0009-store-catalog-api.md)).
 - Store jako BFF loguje klienta w Keycloaku (szczegóły w „Store jako BFF” niżej) i woła backend z tokenem Bearer użytkownika, również server-to-server.
 - Nagłówek `Authorization` przechodzi przez edge bez zmian.
-- Tylko edge ma publiczne porty; backend, store, admin i baza nie są publikowane.
+- Przeglądarka loguje się na `https://AUTH_DOMAIN` (w dev `http://localhost:8180`). Wymiana kodu na tokeny, discovery i JWKS idą siecią wewnętrzną (`http://keycloak:8080`), nie przez edge.
+- Tylko edge ma publiczne porty; backend, store, admin, Keycloak, Redis i baza nie są publikowane. Redis sesji jest w osobnej sieci `sessions`, wspólnej tylko ze sklepem.
 
 ### Moduły backendu
 
@@ -39,15 +40,9 @@ Granice pilnuje Deptrac (`apps/backend/deptrac.yaml`); moduły komunikują się 
 | Ordering | planowany | Składanie i cykl życia zamówienia |
 | Payments | planowany | Płatności |
 
-### Keycloak (tożsamość)
-
-- Jedna instancja Keycloak 26.8.0 (w Compose dev), dwa realmy: `store` (klienci sklepu) i `admin` (administratorzy; MFA).
-- Issuer publiczny w dev: `http://localhost:${KEYCLOAK_PORT:-8180}/realms/<realm>`. Discovery i JWKS backend i sklep pobierają przez sieć wewnętrzną: `http://keycloak:8080/realms/<realm>/` (`KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`), a nie przez adres publiczny.
-- Klienci: `store-bff` (poufny, Authorization Code + PKCE S256), `admin-bff` (zarezerwowany pod przyszły BFF admina), `store-api` i `admin-api` (występują jako audience tokenów, przez audience mapper). Rola klienta `admin` na `admin-api` odpowiada `ROLE_ADMIN` w backendzie.
-
 ### Store jako BFF
 
-Kod: `apps/store/src/auth`, zasady w [`apps/store/AGENTS.md`](../apps/store/AGENTS.md). Compose dev uruchamia Keycloak (realm `store`, klient `store-bff`) i `redis-session` oraz przekazuje usłudze `store` zmienne auth (issuer `http://localhost:${KEYCLOAK_PORT}/realms/store`, wewnętrznie `http://keycloak:8080/realms/store`, Redis jako użytkownik ACL `store`); sklep startuje w dev w trybie `oidc`. Topologia prod (`compose.prod.yaml`, `check-prod-stack.sh`) nie ma jeszcze Keycloaka, `redis-session` ani zmiennych auth sklepu (część „Planowane”).
+Kod: `apps/store/src/auth`, zasady w [`apps/store/AGENTS.md`](../apps/store/AGENTS.md). Compose dev i prod uruchamiają Keycloak i `redis-session` i przekazują usłudze `store` zmienne auth (issuer dev `http://localhost:${KEYCLOAK_PORT}/realms/store`, prod `https://${AUTH_DOMAIN}/realms/store`, wewnętrznie `http://keycloak:8080/realms/store`, Redis jako użytkownik ACL `store`); sklep działa w trybie `oidc`. Pełny przepływ logowania sprawdza `infra/scripts/check-auth-flow.sh`: w dev ręcznie, w topologii prod przez edge w ramach `check-prod-stack.sh`.
 
 - Next.js jest poufnym klientem `store-bff` (realm `store`): Authorization Code + PKCE S256, `state`, `nonce` i parametr `iss` (RFC 9207) wymagane. Tokeny wyłącznie po stronie serwera; w przeglądarce tylko nieprzezroczysty identyfikator sesji w ciasteczku `__Host-store_session` (`HttpOnly`, `Secure`, `SameSite=Lax`).
 - Konfiguracja w runtime: `STORE_AUTH_MODE` (`oidc` domyślnie; `disabled` tylko z `STORE_ENVIRONMENT=development` albo `test`), `STORE_PUBLIC_URL`, `STORE_OIDC_ISSUER` (issuer publiczny), opcjonalnie `STORE_OIDC_INTERNAL_URL` (ten sam issuer w sieci wewnętrznej, ze ścieżką realmu, np. `http://keycloak:8080/realms/store`; przez niego idą discovery, token endpoint i JWKS), `STORE_OIDC_CLIENT_ID`, `STORE_OIDC_CLIENT_SECRET`, `STORE_REDIS_URL`, `STORE_SESSION_ENC_KEYS`. Bez kompletnej konfiguracji w trybie `oidc` serwer sklepu nie startuje.
@@ -79,8 +74,22 @@ Backend jest bezstanowy: przy każdym żądaniu sam waliduje token dostępu OIDC
 | `GET /admin/me` | `{id, email \| null, roles}` |
 
 - Powiązanie z tożsamością zewnętrzną to para (issuer, `sub`), unikalna w `Customers` i `Backoffice`; rekord powstaje przy pierwszym żądaniu (just-in-time), e-mail jest synchronizowany z tokenu. Backend nie przechowuje haseł ani ról: role pochodzą z tokenu, `AdminUser` ma tylko lokalną blokadę (403). Ryzyko: zmiana `AUTH_DOMAIN` zmienia `iss`, więc wymaga migracji powiązań (issuer, `sub`).
-- Konfiguracja: zmienne `OIDC_STORE_*` i `OIDC_ADMIN_*` (wartości dev w `apps/backend/.env` i `compose.override.yaml`, w produkcji wymagane przez `compose.prod.yaml`). W dev Keycloak działa w Compose; w topologii prod jeszcze nie (część „Planowane”).
 - Logowanie klienta sklepu: BFF opisany w „Store jako BFF”; tokeny nigdy nie trafiają do przeglądarki.
+- Konfiguracja: zmienne `OIDC_STORE_*` i `OIDC_ADMIN_*` (wartości dev w `apps/backend/.env` i `compose.override.yaml`, w produkcji wymagane przez `compose.prod.yaml`); tokeny wydaje Keycloak (sekcja „Tożsamość (Keycloak)”).
+
+### Tożsamość (Keycloak)
+
+- Jedna instancja Keycloak 26.8.0, dwa realmy: `store` (klienci sklepu) i `admin` (administratorzy; OTP zawsze wymagane w przepływie przeglądarkowym, `admin-cli` bez grantu hasłem). Realmy są importowane przy pierwszym starcie; sekrety i adresy to placeholdery z konfiguracji uruchomieniowej.
+- Issuer publiczny: dev `http://localhost:8180/realms/<realm>`, prod `https://${AUTH_DOMAIN}/realms/<realm>`. Discovery, tokeny i JWKS usługi pobierają przez sieć wewnętrzną: `http://keycloak:8080/realms/<realm>/` (`KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`), z tym samym issuerem.
+- Klienci: `store-bff` (poufny, Authorization Code + PKCE S256, redirect `${STORE_PUBLIC_URL}/auth/callback`, back-channel logout `http://store:3000/auth/backchannel-logout`), `admin-bff` (zarezerwowany pod przyszły BFF admina), `store-api` i `admin-api` (audience tokenów). Rola klienta `admin` na `admin-api` odpowiada `ROLE_ADMIN` w backendzie.
+- Edge na `AUTH_DOMAIN` udostępnia tylko endpointy potrzebne przeglądarce: `/realms/store/*`, `/realms/admin/*`, `/resources/*`. Endpointy serwer-serwer tych realmów (`token`, `userinfo`, `revoke`, `token/introspect`, `ext/*`, `auth/device`, `clients-registrations/*`), konsola administracyjna, realm `master`, `/health` i `/metrics` zwracają 404. Administracja tylko przez `kcadm.sh` w kontenerze ([ADR-0004](adr/0004-edge-proxy-and-production-topology.md)).
+- Prod: obraz `keycloak_prod` (`kc.sh build`, `start --optimized`), nie-root, `read_only`, `cap_drop: ALL`; baza i rola `keycloak` w tym samym PostgreSQL, tworzone przez `infra/scripts/keycloak-db.sh` przed startem Keycloaka.
+
+### Sesje sklepu (redis-session)
+
+- Osobny Redis `redis-session` (`redis:8.8.2-alpine`, `noeviction`, AOF): ACL z wyłączonym użytkownikiem `default`, użytkownik `store` ograniczony do kluczy `store:*` i poleceń magazynu sesji, `ops` do administracji. Definicja i ACL są wspólne dla dev i prod (`compose.yaml`).
+- Prod: nie-root (`redis`), `read_only`, `cap_drop: ALL`, bez portów, tylko w sieci `sessions` ze sklepem.
+- Sklep dostaje komplet konfiguracji logowania i sesji (`STORE_AUTH_MODE=oidc`, `STORE_OIDC_*`, `STORE_REDIS_URL`, `STORE_SESSION_ENC_KEYS`); kod BFF opisuje „Store jako BFF”.
 
 ## Planowane (zatwierdzone, w realizacji)
 
@@ -110,10 +119,6 @@ Przeglądarka
 
 Tokeny dokleja po stronie serwera BFF sklepu oraz oauth2-proxy / admin-bff; SPA admina i przeglądarka ich nie widzą. Walidację tokenów w backendzie opisuje część „Stan aktualny”.
 
-### Tożsamość w topologii prod
-
-- Keycloak za edge na `AUTH_DOMAIN`, issuer `https://${AUTH_DOMAIN}/realms/<realm>`: publiczne endpointy obu realmów (`/realms/store/...`, `/realms/admin/...`, m.in. przekierowanie z `store-bff` na `/realms/store/protocol/openid-connect/auth`); konsola administracyjna Keycloak (`/admin/...`) niepubliczna.
-- `redis-session` (`redis:8.8.2-alpine`, `noeviction`, AOF, ACL z użytkownikiem `store` ograniczonym do prefiksu `store:`) i Keycloak w `compose.prod.yaml` oraz zmienne auth usługi `store` (issuer `https://${AUTH_DOMAIN}/realms/store`, wewnętrznie `http://keycloak:8080/realms/store`), sprawdzane przez `check-prod-stack.sh`. W dev działa to już (część „Stan aktualny”, „Store jako BFF”).
 
 ### Admin
 
@@ -121,6 +126,5 @@ Tokeny dokleja po stronie serwera BFF sklepu oraz oauth2-proxy / admin-bff; SPA 
 
 ### Redis, RabbitMQ, Elasticsearch
 
-- Redis sesji (`redis-session`) działa w Compose dev (część „Stan aktualny”); w prod zob. „Tożsamość w topologii prod”.
 - Redis cache powstanie później jako osobna instancja (inne wymagania niż sesje: eviction zamiast `noeviction`).
 - RabbitMQ i Elasticsearch to opcjonalne profile Compose, bez integracji biznesowej; integrujemy je dopiero przy konkretnym przypadku użycia.

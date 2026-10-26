@@ -60,7 +60,44 @@ services:
       # PostgreSQL 18+ images keep data under /var/lib/postgresql/<major>/docker
       - database_data:/var/lib/postgresql
 
+  # Store sessions (Redis), in development (compose.override.yaml) and production
+  # (compose.prod.yaml), which provide the passwords. ACL: the default user is disabled;
+  # "store" may use only keys store:* and the commands the store session store needs,
+  # directly and inside its Lua scripts (EVAL: DEL, EXISTS, GET, HGET, HINCRBY, HSET,
+  # PEXPIRE), MULTI/EXEC and the node-redis handshake HELLO/AUTH/CLIENT SETINFO;
+  # "ops" administers (health check, CONFIG). The ACL file is generated at startup from
+  # the environment (no password in the repository, on the command line or in the image)
+  # in /tmp, so the same command runs as root (development) and as the unprivileged
+  # redis user (production). Passwords must not contain whitespace.
+  # No service depends on it (depends_on).
+  redis-session:
+    image: redis:8.8.2-alpine
+    restart: unless-stopped
+    entrypoint: ["sh", "-ec"]
+    command:
+      - |
+        umask 077
+        {
+          echo "user default reset off"
+          echo "user store reset on >$${REDIS_SESSION_PASSWORD} ~store:* resetchannels -@all +auth +hello +client|setinfo +ping +eval +evalsha +multi +exec +get +getdel +set +del +exists +hget +hset +hgetall +hincrby +pexpire +sadd +smembers +srem"
+          echo "user ops reset on >$${REDIS_OPS_PASSWORD} ~* &* +@all"
+        } > /tmp/users.acl
+        chown redis:redis /tmp/users.acl
+        exec docker-entrypoint.sh redis-server --aclfile /tmp/users.acl \
+          --appendonly yes --appendfsync everysec --save "" \
+          --maxmemory 256mb --maxmemory-policy noeviction
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_OPS_PASSWORD\" redis-cli --no-auth-warning --user ops ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    mem_limit: 384m
+    volumes:
+      - redis_session_data:/data
+
 volumes:
   caddy_data:
   caddy_config:
   database_data:
+  redis_session_data:
