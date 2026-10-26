@@ -145,7 +145,8 @@ Accounts, login and roles of customers and administrators live in an external id
   working during an outage of the provider; without cached keys the protected APIs answer 401.
   The public API does not depend on the provider at all.
 - The production image has no defaults: the backend needs the `OIDC_STORE_*` and `OIDC_ADMIN_*` variables
-  (issuer, discovery URL, audience, clients) at runtime. `apps/backend/.env` holds the development values.
+  (issuer, discovery URL, audience, clients) at runtime; `compose.prod.yaml` refuses to start without any
+  of them. `apps/backend/.env` holds the development values.
 - `docs/api/openapi.yaml` is maintained by hand for now; contract tests and `packages/sdk` follow in stage 5.
 - Milestone 4 adds reservations in Inventory and changes only the `reserved` part of `StockLevels`;
   Catalog and the API already carry `reserved` and `available`.

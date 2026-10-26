@@ -14,6 +14,12 @@ HTTPS_PORT="${CHECK_PROD_HTTPS_PORT:-8443}"
 export PROD_HTTP_PORT="$HTTP_PORT" PROD_HTTPS_PORT="$HTTPS_PORT" PROD_HTTP3_PORT="$HTTPS_PORT"
 # Test domains (resolved to 127.0.0.1 by curl --resolve) and a local CA instead of ACME.
 export STORE_DOMAIN="store.localhost" ADMIN_DOMAIN="admin.localhost"
+# Identity provider of the check (ADR-0005): no Keycloak runs, so the discovery URLs
+# do not resolve and every token is rejected (401); public endpoints need none.
+export OIDC_STORE_ISSUER="https://auth.localhost/realms/store" OIDC_STORE_DISCOVERY_URL="http://keycloak:8080/realms/store/" \
+	OIDC_STORE_AUDIENCE="store-api" OIDC_STORE_CLIENTS="store-bff" \
+	OIDC_ADMIN_ISSUER="https://auth.localhost/realms/admin" OIDC_ADMIN_DISCOVERY_URL="http://keycloak:8080/realms/admin/" \
+	OIDC_ADMIN_AUDIENCE="admin-api" OIDC_ADMIN_CLIENTS="admin-bff"
 export EDGE_GLOBAL_OPTIONS="local_certs
 skip_install_trust"
 
@@ -60,6 +66,20 @@ if env -u APP_SECRET -u POSTGRES_PASSWORD -u STORE_DOMAIN -u ADMIN_DOMAIN \
 else
 	pass "compose.prod.yaml refuses to start without APP_SECRET/POSTGRES_PASSWORD/STORE_DOMAIN/ADMIN_DOMAIN"
 fi
+if APP_SECRET=x POSTGRES_PASSWORD=x docker compose -f compose.yaml -f compose.prod.yaml config -q 2>/dev/null; then
+	pass "compose.prod.yaml accepts the complete configuration"
+else
+	fail "compose.prod.yaml refuses the complete configuration"
+fi
+for var in OIDC_STORE_ISSUER OIDC_STORE_DISCOVERY_URL OIDC_STORE_AUDIENCE OIDC_STORE_CLIENTS \
+	OIDC_ADMIN_ISSUER OIDC_ADMIN_DISCOVERY_URL OIDC_ADMIN_AUDIENCE OIDC_ADMIN_CLIENTS; do
+	if env -u "$var" APP_SECRET=x POSTGRES_PASSWORD=x \
+		docker compose -f compose.yaml -f compose.prod.yaml config -q 2>/dev/null; then
+		fail "compose.prod.yaml accepts a missing ${var}"
+	else
+		pass "compose.prod.yaml refuses to start without ${var}"
+	fi
+done
 if docker run --rm "$BACKEND_IMAGE" >/dev/null 2>&1; then
 	fail "backend image starts without APP_SECRET/DATABASE_PASSWORD"
 else
@@ -131,6 +151,15 @@ done
 
 echo "== Backend behind the edge"
 expect_health 200 "health check with special-character database password"
+# Protected APIs: 401 without a token and with a rejected one (the identity provider of
+# the check is unreachable), never 500 (e.g. a missing OIDC_* variable).
+for target in "$STORE_DOMAIN /api/me" "$ADMIN_DOMAIN /api/admin/me"; do
+	read -r domain path <<<"$target"
+	got="$(status "$domain" "$path")"
+	[ "$got" = "401" ] && pass "${domain}${path} without a token -> 401" || fail "${domain}${path} without a token: HTTP ${got}"
+	got="$(status "$domain" "$path" -H 'Authorization: Bearer not.a.token')"
+	[ "$got" = "401" ] && pass "${domain}${path} with a rejected token -> 401" || fail "${domain}${path} with a rejected token: HTTP ${got}"
+done
 compose exec -T backend sh -c 'touch /app/src/.write-test' >/dev/null 2>&1 \
 	&& fail "application code is writable" || pass "application code is read-only"
 compose stop database >/dev/null 2>&1
