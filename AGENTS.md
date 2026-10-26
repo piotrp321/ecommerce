@@ -19,8 +19,9 @@ Edukacyjny system e-commerce rozwijany jako monorepo. Projekt służy do nauki A
 - `apps/store`: sklep, Next.js + React + TypeScript (SSR)
 - `packages/sdk`: planowany w etapie 5 (`docs/roadmap.md`); nie twórz go na zapas
 - `infra/docker/<app>/`: obraz Docker danej aplikacji (Dockerfile i jego `Dockerfile.dockerignore`)
+- `infra/docker/keycloak/`, `infra/keycloak/realms/`: obraz Keycloaka (dev, `start-dev`) i definicje realmów `store`/`admin` (import jednorazowy, sekrety jako placeholdery `${ENV}`, bez użytkowników)
 - `infra/edge/`: edge proxy (Caddy), jedyny publiczny punkt wejścia produkcji: TLS, routing po domenie i ścieżce (`/api/*` → backend bez prefiksu)
-- `infra/scripts/`: skrypty kontroli prod (`check-prod-admin.sh`, `check-prod-store.sh`, `check-prod-stack.sh` dla całej topologii)
+- `infra/scripts/`: skrypty kontroli prod (`check-prod-admin.sh`, `check-prod-store.sh`, `check-prod-stack.sh` dla całej topologii) i dev (`check-dev-infra.sh`), baza Keycloaka (`keycloak-db.sh`), użytkownicy testowi dev (`keycloak-dev-seed.sh`)
 - `docs/`: specyfikacje, roadmapa, ADR, kontrakt REST API `docs/api/openapi.yaml` (OpenAPI 3.1)
 - katalog główny: `compose.yaml` (wspólny, projekt dev `ecommerce`), `compose.override.yaml` (dev, porty tylko na localhost), `compose.prod.yaml` (osobny projekt `ecommerce-prod`, edge + trzy aplikacje, wymagane sekrety i domeny), `Makefile`, pnpm workspace (`package.json`, `pnpm-workspace.yaml`, jeden `pnpm-lock.yaml`), `.node-version`, `AGENTS.md`, `README.md`
 - `.claude/`: wspólna konfiguracja Claude Code ([ADR-0008](docs/adr/0008-agentic-sdlc-claude-code.md)): skill `/feature-delivery` (`skills/`), subagenci `developer`, `code-reviewer`, `qa-tester` (`agents/`), reguły `ask` (`settings.json`); pozostałe pliki `.claude/` (np. `settings.local.json`, `worktrees/`) są lokalne i ignorowane
@@ -30,16 +31,18 @@ Obrazy budujemy z kontekstu w katalogu głównym. Co trafia do obrazu, określa 
 ## Komendy
 
 Wszystko uruchamiaj z katalogu głównego przez `make` (`make help` pokazuje listę).
-Konwencja: cele zbiorcze bez prefiksu, cele aplikacji z prefiksem nazwy aplikacji (`backend-*`, `admin-*`, `store-*`, `edge-*`), cała topologia prod z prefiksem `stack-`, kontrakt API z prefiksem `contract-`, cele workspace z prefiksem `pnpm-`.
+Konwencja: cele zbiorcze bez prefiksu, cele aplikacji z prefiksem nazwy aplikacji (`backend-*`, `admin-*`, `store-*`, `edge-*`), cała topologia z prefiksem `stack-` (`stack-check-prod`, `stack-check-dev`), Keycloak dev z prefiksem `keycloak-`, kontrakt API z prefiksem `contract-`, cele workspace z prefiksem `pnpm-`.
 
 - `make bootstrap`: środowisko dev od zera (build, `pnpm-install`, up, Composer, migracje), dokładnie tak jak w README
-- `make up`, `make down`, `make logs`: kontenery dev (`down` nie usuwa wolumenów)
+- `make up`, `make down`, `make logs`: kontenery dev (`down` nie usuwa wolumenów); `up` najpierw uruchamia PostgreSQL i idempotentny `keycloak-db.sh`, potem resztę (z Keycloakiem i `redis-session`, od których żadna aplikacja nie zależy)
+- `make keycloak-dev-seed`: użytkownicy testowi tylko w Keycloaku dev (idempotentnie); dane logowania i generowanie kodu TOTP opisuje README
+- `make stack-check-dev`: kontrola infrastruktury dev (Keycloak, Redis sesji, porty, działanie aplikacji bez nich) we własnym projekcie `ecommerce-dev-check` (`-p`, nadpisywany `DEV_CHECK_PROJECT`, porty `DEV_CHECK_*_PORT`); uruchamiaj po zmianach w Keycloaku, Redisie, `compose*.yaml` lub `Makefile`
 - `make check`: **obowiązkowa bramka przed każdym commitem** (lint kontraktu API i wszystkie aplikacje). Wyjątek: w procesie `/feature-delivery` Developer przed pośrednimi commitami uruchamia kontrole zmienianych modułów, a pełne `make check` na wersji przekazywanej do review ([ADR-0010](docs/adr/0010-agentic-sdlc-performance.md))
 - `make contract-lint`: lint `docs/api/openapi.yaml` (Redocly, `redocly.yaml`); zgodność backendu z kontraktem sprawdzają testy backendu
 - `make build-prod`: obrazy produkcyjne; sekrety podaje się dopiero przy uruchomieniu (`compose.prod.yaml`)
 - `make check-prod`: kontrola obrazów admina (8081) i sklepu (8082) oraz całej topologii prod z edge w tymczasowym projekcie (8080/8443: routing, ekspozycja, uprawnienia, backend, niezależne wdrożenia); uruchamiaj po zmianach w `infra/`, `compose*.yaml` lub `Makefile`
 - `make pnpm-install`, `make pnpm c="…"`: zależności JS i pnpm w kontenerze (`node_modules` w wolumenach Dockera)
-- CI (`.github/workflows/ci.yml`) uruchamia te same komendy: `make bootstrap` i `make check` automatycznie dla PR i pushy do `main`, a `make check-prod` czasowo tylko ręcznie (`workflow_dispatch`, np. `gh workflow run ci.yml --ref <gałąź>`), zalecany przed merge zmian wpływających na obrazy produkcyjne (`infra/`, `compose*.yaml`, `Makefile`, Dockerfile, manifesty i lockfile zależności). Nowe kontrole dodawaj do `Makefile`, nie bezpośrednio do workflow.
+- CI (`.github/workflows/ci.yml`) uruchamia te same komendy: `make bootstrap`, `make check` i `make stack-check-dev` automatycznie dla PR i pushy do `main`, a `make check-prod` czasowo tylko ręcznie (`workflow_dispatch`, np. `gh workflow run ci.yml --ref <gałąź>`), zalecany przed merge zmian wpływających na obrazy produkcyjne (`infra/`, `compose*.yaml`, `Makefile`, Dockerfile, manifesty i lockfile zależności). Nowe kontrole dodawaj do `Makefile`, nie bezpośrednio do workflow.
 
 ## Frontend: tryb lokalny i Docker
 
