@@ -17,3 +17,16 @@ framework:
         # Namespaced pools use the above "app" backend by default
         #pools:
             #my.dedicated.cache: null
+
+        # OIDC discovery documents and signing keys (security.yaml). An entry lives
+        # as long as the provider's Cache-Control max-age allows (1 hour without it).
+        pools:
+            cache.oidc:
+                adapter: cache.adapter.filesystem
+
+when@test:
+    framework:
+        cache:
+            pools:
+                cache.oidc:
+                    adapter: cache.adapter.array

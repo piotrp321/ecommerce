@@ -15,13 +15,22 @@ info:
     Relative `Location` headers (e.g. `products/{id}`) resolve correctly against
     the public request URL.
 
-    **Access.**
-    - `/catalog/...`: public and read-only; only active products are visible.
-    - `/admin/...`: every operation requires the administrator bearer token;
-      they include inactive products and stock quantities. The token is an
-      INTERIM solution (ADR-0005) for tests and server-side calls only: it must
-      never be used in browser code. Before the admin panel uses this API it gets
-      proper login with HttpOnly session cookies and CSRF protection.
+    **Access.** Bearer access tokens (JWT, RS256) of the identity provider
+    (Keycloak), validated by the backend without sessions: signature with the
+    realm's published keys, `iss`, `aud`, `exp`, `nbf`, `iat`, `typ: Bearer` and
+    the calling client (`azp`). Browsers never hold the tokens; the store and
+    admin backends-for-frontends call the API with them.
+    - `/catalog/...` and `/health`: public and read-only; any token is ignored.
+      Only active products are visible.
+    - `/me` (and every other path outside `/catalog/` and `/admin/`): a customer
+      token of the `store` realm (`customerBearer`).
+    - `/admin/...`: an administrator token of the `admin` realm (`adminBearer`);
+      includes inactive products and stock quantities.
+    - `401` with `WWW-Authenticate: Bearer` without a token, or
+      `Bearer error="invalid_token"` for a rejected token (also when the identity
+      provider cannot be reached); `403` with
+      `Bearer error="insufficient_scope"` for a valid token without the required
+      role. The `detail` is generic; the reason is only logged.
 
     **Money.** Decimal strings with exactly two fractional digits, currency always
     `PLN`. Calculated in grosze (integers): `gross = round_half_up(net × (1 + VAT))`
@@ -38,10 +47,14 @@ servers:
 tags:
   - name: Catalog (public)
     description: Read-only catalog for the store; only active products.
+  - name: Customers
+    description: The signed-in customer of the store; requires a customer token.
+  - name: Backoffice
+    description: The signed-in administrator; requires an administrator token.
   - name: Catalog (admin)
-    description: Product and category management; requires the administrator token.
+    description: Product and category management; requires an administrator token.
   - name: Inventory (admin)
-    description: Stock quantities; requires the administrator token.
+    description: Stock quantities; requires an administrator token.
   - name: Operations
     description: Technical endpoints (monitoring).
 
@@ -64,6 +77,23 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Health' }
+
+  # ——— Customers —————————————————————————————————————————————————————————
+  /me:
+    get:
+      tags: [Customers]
+      operationId: getMe
+      summary: The signed-in customer
+      description: The first request of a customer registers them; the e-mail is kept in sync with the token.
+      security: [{ customerBearer: [] }]
+      responses:
+        '200':
+          description: The customer
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Me' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   # ——— Public ————————————————————————————————————————————————————————————
   /catalog/products:
@@ -159,13 +189,30 @@ paths:
               schema: { $ref: '#/components/schemas/PublicCategoryDetails' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  # ——— Admin: back office ————————————————————————————————————————————————
+  /admin/me:
+    get:
+      tags: [Backoffice]
+      operationId: adminGetMe
+      summary: The signed-in administrator
+      description: The first request of an administrator registers them; the roles come from the token.
+      security: [{ adminBearer: [] }]
+      responses:
+        '200':
+          description: The administrator
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminMe' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   # ——— Admin: products ———————————————————————————————————————————————————
   /admin/catalog/products:
     get:
       tags: [Catalog (admin)]
       operationId: adminListProducts
       summary: List products, including inactive ones
-      security: [{ adminToken: [] }]
+      security: [{ adminBearer: [] }]
       parameters:
         - name: status
           in: query
@@ -201,7 +248,7 @@ paths:
       tags: [Catalog (admin)]
       operationId: adminCreateProduct
       summary: Create a product (created inactive)
-      security: [{ adminToken: [] }]
+      security: [{ adminBearer: [] }]
       requestBody:
         required: true
         content:
@@ -230,7 +277,7 @@ paths:
       tags: [Catalog (admin)]
       operationId: adminGetProduct
       summary: Get a product
-      security: [{ adminToken: [] }]
+      security: [{ adminBearer: [] }]
       responses:
         '200':
           description: The product
@@ -244,7 +291,7 @@ paths:
       tags: [Catalog (admin)]
       operationId: adminUpdateProduct
       summary: Replace the editable fields of a product (SKU and status are not editable here)
-      security: [{ adminToken: [] }]
+      security: [{ adminBearer: [] }]
       requestBody:
         required: true
         content:
@@ -269,7 +316,7 @@ paths:
       tags: [Catalog (admin)]
       operationId: adminActivateProduct
       summary: Put the product on sale (idempotent)
-      security: [{ adminToken: [] }]
+      security: [{ adminBearer: [] }]
       responses:
         '200':
           description: The product, now active
@@ -287,7 +334,7 @@ paths:
       tags: [Catalog (admin)]
       operationId: adminDeactivateProduct
       summary: Withdraw the product from sale (idempotent; spec R6)
-      security: [{ adminToken: [] }]
+      security: [{ adminBearer: [] }]
       responses:
         '200':
           description: The product, now inactive
@@ -304,7 +351,7 @@ paths:
       tags: [Catalog (admin)]
       operationId: adminListCategories
       summary: The whole category tree with product counts
-      security: [{ adminToken: [] }]
+      security: [{ adminBearer: [] }]
       responses:
         '200':
           description: Root categories with nested subcategories; siblings ordered by name
@@ -323,7 +370,7 @@ paths:
       tags: [Catalog (admin)]
       operationId: adminCreateCategory
       summary: Create a root category or a subcategory
-      security: [{ adminToken: [] }]
+      security: [{ adminBearer: [] }]
       requestBody:
         required: true
         content:
@@ -352,7 +399,7 @@ paths:
       tags: [Catalog (admin)]
       operationId: adminGetCategory
       summary: A category with its subtree and ancestors
-      security: [{ adminToken: [] }]
+      security: [{ adminBearer: [] }]
       responses:
         '200':
           description: The category
@@ -366,7 +413,7 @@ paths:
       tags: [Catalog (admin)]
       operationId: adminUpdateCategory
       summary: Rename a category or change its slug (the parent changes only through move)
-      security: [{ adminToken: [] }]
+      security: [{ adminBearer: [] }]
       requestBody:
         required: true
         content:
@@ -388,7 +435,7 @@ paths:
       operationId: adminDeleteCategory
       summary: Delete a category without products and subcategories
       description: Products and subcategories are never deleted or moved implicitly; a non-empty category gives 409.
-      security: [{ adminToken: [] }]
+      security: [{ adminBearer: [] }]
       responses:
         '204': { description: Deleted }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -407,7 +454,7 @@ paths:
         Products stay in their categories. Rejected with 409 when the new parent is the
         category itself or one of its descendants (cycle), or when the tree would get
         deeper than 10 levels; 422 when the parent does not exist.
-      security: [{ adminToken: [] }]
+      security: [{ adminBearer: [] }]
       requestBody:
         required: true
         content:
@@ -444,7 +491,7 @@ paths:
       tags: [Inventory (admin)]
       operationId: adminGetStock
       summary: Get the stock of a product (0 if never set)
-      security: [{ adminToken: [] }]
+      security: [{ adminBearer: [] }]
       responses:
         '200':
           description: Stock level
@@ -458,7 +505,7 @@ paths:
       tags: [Inventory (admin)]
       operationId: adminSetStock
       summary: Set the quantity on hand of a product
-      security: [{ adminToken: [] }]
+      security: [{ adminBearer: [] }]
       requestBody:
         required: true
         content:
@@ -482,14 +529,23 @@ paths:
 
 components:
   securitySchemes:
-    adminToken:
+    customerBearer:
       type: http
       scheme: bearer
+      bearerFormat: JWT
       description: |
-        INTERIM administrator token (ADR-0005), configured on the server as the
-        `ADMIN_API_TOKEN` secret. Tests and server-side calls only, never in a
-        browser. Replaced by admin login with HttpOnly session cookies and CSRF
-        protection before the admin panel uses the API.
+        Access token of the `store` realm with the audience `store-api`, issued
+        to an allowed client (`store-bff`). Any valid token is a customer
+        (`ROLE_CUSTOMER`).
+    adminBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Access token of the `admin` realm with the audience `admin-api`, issued
+        to an allowed client (`admin-bff`), with the client role `admin` of
+        `admin-api` (`resource_access.admin-api.roles`). Realm roles and roles of
+        other clients do not count. A locally blocked administrator is denied.
 
   parameters:
     Id:
@@ -513,14 +569,19 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
     Forbidden:
-      description: Authenticated, but without the administrator role
+      description: Valid token without the required role (or a locally blocked administrator)
+      headers:
+        WWW-Authenticate:
+          description: '`Bearer error="insufficient_scope"`'
+          schema: { type: string }
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
     Unauthorized:
-      description: Missing or invalid bearer token, or no token configured on the server
+      description: Missing or rejected bearer token (also when the identity provider cannot be reached)
       headers:
         WWW-Authenticate:
+          description: '`Bearer` without a token, `Bearer error="invalid_token"` for a rejected one'
           schema: { type: string }
       content:
         application/problem+json:
@@ -547,6 +608,29 @@ components:
     Uuid:
       type: string
       format: uuid
+    Me:
+      type: object
+      additionalProperties: false
+      required: [id, email, emailVerified]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        email:
+          type: [string, 'null']
+          description: From the token; null when the identity provider has none.
+        emailVerified: { type: boolean }
+    AdminMe:
+      type: object
+      additionalProperties: false
+      required: [id, email, roles]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        email:
+          type: [string, 'null']
+          description: From the token; null when the identity provider has none.
+        roles:
+          type: array
+          description: Roles granted by the current token.
+          items: { type: string, enum: [ROLE_ADMIN] }
     Slug:
       type: string
       pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$'
