@@ -23,7 +23,7 @@ PNPM        = $(DOCKER_COMP) run --rm --no-deps admin pnpm
 	backend-test backend-stan backend-arch backend-check backend-build-prod \
 	admin-lint admin-typecheck admin-test admin-build admin-check admin-build-prod admin-check-prod \
 	store-lint store-typecheck store-test store-build store-check store-build-prod store-check-prod \
-	edge-build-prod stack-check-prod stack-check-auth stack-check-dev keycloak-dev-seed keycloak-build-prod contract-lint
+	edge-build-prod stack-check-prod stack-check-dev keycloak-dev-seed keycloak-build-prod contract-lint
 
 ## —— Help ———————————————————————————————————————————————————————————————————
 help: ## List available targets
@@ -52,7 +52,7 @@ check: contract-lint backend-check admin-check store-check ## Run all quality ga
 
 build-prod: backend-build-prod admin-build-prod store-build-prod edge-build-prod keycloak-build-prod ## Build all production images
 
-check-prod: admin-check-prod store-check-prod stack-check-prod stack-check-auth ## Check the prod images (admin 8081, store 8082), the whole topology (edge 8080/8443) and the sign-in flow
+check-prod: admin-check-prod store-check-prod stack-check-prod ## Check the prod images (admin 8081, store 8082) and the whole topology with the sign-in flow (edge 8080/8443)
 
 ## —— pnpm workspace (JavaScript apps) ———————————————————————————————————————
 pnpm-install: ## Install the workspace dependencies into the container volumes (frozen lockfile)
@@ -163,13 +163,6 @@ edge-build-prod: ## Build the edge proxy image (Caddy, configuration baked in)
 
 stack-check-prod: backend-build-prod admin-build-prod store-build-prod edge-build-prod keycloak-build-prod ## Run the whole prod topology in an ephemeral project (edge 8080/8443) and check it
 	@./infra/scripts/check-prod-stack.sh
-
-stack-check-auth: backend-build-prod admin-build-prod store-build-prod edge-build-prod keycloak-build-prod ## Check the store sign-in flow end to end (infra/scripts/check-auth-flow.sh, when present)
-	@if [ -f infra/scripts/check-auth-flow.sh ]; then \
-		./infra/scripts/check-auth-flow.sh; \
-	else \
-		echo "stack-check-auth: infra/scripts/check-auth-flow.sh does not exist yet, nothing to check"; \
-	fi
 
 stack-check-dev: ## Run the dev topology in its own project (ecommerce-dev-check) and check Keycloak, Redis and exposure
 	@./infra/scripts/check-dev-infra.sh

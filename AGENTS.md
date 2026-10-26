@@ -41,7 +41,7 @@ Obrazy budujemy z kontekstu w katalogu głównym. Co trafia do obrazu, określa 
 ## Komendy
 
 Wszystko uruchamiaj z katalogu głównego przez `make` (`make help` pokazuje listę).
-Konwencja: cele zbiorcze bez prefiksu, cele aplikacji z prefiksem nazwy aplikacji (`backend-*`, `admin-*`, `store-*`, `edge-*`), cała topologia z prefiksem `stack-` (`stack-check-prod`, `stack-check-auth`, `stack-check-dev`), Keycloak z prefiksem `keycloak-`, kontrakt API z prefiksem `contract-`, cele workspace z prefiksem `pnpm-`.
+Konwencja: cele zbiorcze bez prefiksu, cele aplikacji z prefiksem nazwy aplikacji (`backend-*`, `admin-*`, `store-*`, `edge-*`), cała topologia z prefiksem `stack-` (`stack-check-prod`, `stack-check-dev`), Keycloak z prefiksem `keycloak-`, kontrakt API z prefiksem `contract-`, cele workspace z prefiksem `pnpm-`.
 
 - `make bootstrap`: środowisko dev od zera (build, `pnpm-install`, up, Composer, migracje), dokładnie tak jak w README
 - `make up`, `make down`, `make logs`: kontenery dev (`down` nie usuwa wolumenów); `up` najpierw uruchamia PostgreSQL i idempotentny `keycloak-db.sh`, potem resztę (z Keycloakiem i `redis-session`, od których żadna aplikacja nie zależy)
@@ -50,7 +50,7 @@ Konwencja: cele zbiorcze bez prefiksu, cele aplikacji z prefiksem nazwy aplikacj
 - `make check`: **obowiązkowa bramka przed każdym commitem** (lint kontraktu API i wszystkie aplikacje). Wyjątek: w procesie `/feature-delivery` Developer przed pośrednimi commitami uruchamia kontrole zmienianych modułów, a pełne `make check` na wersji przekazywanej do review ([ADR-0010](docs/adr/0010-agentic-sdlc-performance.md))
 - `make contract-lint`: lint `docs/api/openapi.yaml` (Redocly, `redocly.yaml`); zgodność backendu z kontraktem sprawdzają testy backendu
 - `make build-prod`: obrazy produkcyjne; sekrety podaje się dopiero przy uruchomieniu (`compose.prod.yaml`)
-- `make check-prod`: kontrola obrazów admina (8081) i sklepu (8082) oraz całej topologii prod z edge w tymczasowym projekcie (8080/8443: routing, ekspozycja, uprawnienia, backend, Keycloak i logowanie przez `AUTH_DOMAIN`, Redis sesji, niezależne wdrożenia), potem `stack-check-auth` (`infra/scripts/check-auth-flow.sh`, gdy istnieje); uruchamiaj po zmianach w `infra/`, `compose*.yaml` lub `Makefile`
+- `make check-prod`: kontrola obrazów admina (8081) i sklepu (8082) oraz całej topologii prod z edge w tymczasowym projekcie (8080/8443: routing, ekspozycja, uprawnienia, backend, Keycloak i logowanie przez `AUTH_DOMAIN`, Redis sesji, niezależne wdrożenia), w tym przepływ logowania w sklepie przez edge (`infra/scripts/check-auth-flow.sh`); uruchamiaj po zmianach w `infra/`, `compose*.yaml` lub `Makefile`
 - `make pnpm-install`, `make pnpm c="…"`: zależności JS i pnpm w kontenerze (`node_modules` w wolumenach Dockera)
 - CI (`.github/workflows/ci.yml`) uruchamia te same komendy: `make bootstrap`, `make check` i `make stack-check-dev` automatycznie dla PR i pushy do `main`, a `make check-prod` czasowo tylko ręcznie (`workflow_dispatch`, np. `gh workflow run ci.yml --ref <gałąź>`), zalecany przed merge zmian wpływających na obrazy produkcyjne (`infra/`, `compose*.yaml`, `Makefile`, Dockerfile, manifesty i lockfile zależności). Nowe kontrole dodawaj do `Makefile`, nie bezpośrednio do workflow.
 
