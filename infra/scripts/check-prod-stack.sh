@@ -37,7 +37,12 @@ fetch() {
 	shift 2
 	curl -sk --resolve "${domain}:${HTTPS_PORT}:127.0.0.1" "$@" "https://${domain}:${HTTPS_PORT}${path}" || true
 }
-status() { fetch "$1" "$2" -o /dev/null -w '%{http_code}'; }
+# HTTP status: status <domain> <path> [curl options...], e.g. -H for request headers.
+status() {
+	local domain="$1" path="$2"
+	shift 2
+	fetch "$domain" "$path" "$@" -o /dev/null -w '%{http_code}'
+}
 header() { fetch "$1" "$2" -D - -o /dev/null | tr -d '\r' | grep -i "^$3:" | cut -d' ' -f2- || true; }
 expect_health() {
 	local expected="$1" label="$2" got
