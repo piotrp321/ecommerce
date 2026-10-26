@@ -42,11 +42,14 @@ Next.js 16 różni się od wcześniejszych wersji (API, konwencje, struktura pli
 - Strona główna ma `dynamic = 'force-dynamic'` (renderowanie na żądanie). Dla treści statycznych świadomie wybieraj renderowanie statyczne lub cache.
 - `GET /healthz` (`src/app/healthz/route.ts`) to liveness procesu Next.js dla `HEALTHCHECK` obrazów dev i prod: 200 `ok`, `Cache-Control: no-store`. Nie może używać katalogu, backendu, bazy ani danych środowiska, więc awaria backendu nie oznacza niezdrowego kontenera. Błędy stron wykrywają testy i `infra/scripts/check-prod-*.sh`. Nie przenoś trasy na `/health` (edge check oczekuje tam 404 sklepu) ani pod `/api/*` (to idzie do backendu).
 
-## Bezpieczeństwo (pod przyszłe logowanie)
+## Bezpieczeństwo
 
-- Autoryzacja zawsze na backendzie.
-- Sesja w ciasteczkach `HttpOnly`, `Secure`, `SameSite`; żadnych tokenów w `localStorage`.
-- Server Actions i formularze zmieniające stan wymagają ochrony CSRF/Origin zgodnej z dokumentacją Next.js i backendu.
+Stan aktualny: sklep nie loguje; katalog jest publiczny.
+Plan ([architektura](../../docs/architecture.md)): Next.js jako BFF z logowaniem OIDC (Keycloak, realm `store`, Authorization Code + PKCE), sesje w Redis.
+
+- Autoryzacja zawsze na backendzie, który jest bezstanowy i sam waliduje token.
+- Tokeny tylko po stronie serwera Next.js (BFF); w przeglądarce wyłącznie identyfikator sesji w ciasteczku `HttpOnly`, `Secure`, `SameSite`. Żadnych tokenów w `localStorage`, `sessionStorage` ani w kodzie klienckim.
+- Server Actions i formularze zmieniające stan wymagają ochrony CSRF/Origin zgodnej z dokumentacją Next.js.
 
 ## Komendy
 

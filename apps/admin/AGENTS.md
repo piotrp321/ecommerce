@@ -7,13 +7,16 @@ Panel administracyjny: React 19 + Vite 8 + TypeScript (SPA). Uzupełnia główny
 - Admin to interfejs. Logika biznesowa (ceny, stany, zamówienia, płatności, uprawnienia) jest wyłącznie w backendzie; admin jej nie duplikuje.
 - Komunikacja z backendem tylko przez REST pod ścieżką `/api` na tej samej domenie (same-origin). W dev proxy zapewnia serwer Vite (`ADMIN_API_PROXY_TARGET`), w prod centralny edge.
 - Typy i klient API pochodzą docelowo z kontraktu OpenAPI (`packages/sdk`, etap 5). Do tego czasu nie twórz ręcznych duplikatów DTO backendu.
-- Nie implementuj funkcji biznesowych ani logowania, dopóki etap tego nie obejmuje.
+- Nie implementuj funkcji biznesowych ani logowania, dopóki etap tego nie obejmuje (M3 „Tożsamość i dostęp”, [roadmapa](../../docs/roadmap.md)).
 
-## Bezpieczeństwo (pod przyszłe logowanie)
+## Bezpieczeństwo
+
+Stan aktualny: panel nie loguje i nie łączy się z API.
+Plan ([architektura](../../docs/architecture.md)): logowanie przez OIDC (Keycloak, realm `admin`), wstępnie z oauth2-proxy, docelowo ewentualnie własny BFF.
 
 - Autoryzacja zawsze na backendzie; ukrycie elementu w UI nie jest zabezpieczeniem.
-- Sesja w ciasteczkach `HttpOnly`, `Secure`, `SameSite` ustawianych przez backend. Żadnych tokenów w `localStorage` ani `sessionStorage`.
-- Żądania zmieniające stan muszą przechodzić ochronę CSRF, gdy backend ją wprowadzi.
+- Sesja żyje w warstwie sesji (oauth2-proxy lub BFF), nie w backendzie, który jest bezstanowy. Ciasteczko sesji: `HttpOnly`, `Secure`, `SameSite`. Żadnych tokenów w przeglądarce: ani w `localStorage`, ani w `sessionStorage`.
+- Żądania zmieniające stan muszą przechodzić ochronę CSRF/Origin na warstwie sesji; samo `SameSite` nie wystarcza, bo `STORE_DOMAIN` i `ADMIN_DOMAIN` mogą być same-site.
 - Zmienne `VITE_*` trafiają do publicznego bundla: nigdy nie umieszczaj w nich sekretów. Adresy API nie są potrzebne, bo `/api` jest same-origin.
 
 ## Struktura i tryb demonstracyjny
@@ -21,7 +24,7 @@ Panel administracyjny: React 19 + Vite 8 + TypeScript (SPA). Uzupełnia główny
 - `src/api`: port danych `AdminApi` (ekrany zależą tylko od niego), `ApiError` (RFC 9457) i **tymczasowe** typy (`types.ts`). Są bliskie DTO z kontraktu `docs/api/openapi.yaml`, co jest zaakceptowanym wyjątkiem do czasu SDK. Po wprowadzeniu SDK z OpenAPI (etap 5) zastąp je typami SDK i mapowaniem w adapterze; nie rozbudowuj ich ręcznie.
 - `src/demo`: jedyna obecna implementacja `AdminApi`, dane w pamięci karty (bez sieci i storage). Symuluje odpowiedzi błędów kontraktu tylko po to, by pokazać stany UI; nie jest źródłem reguł biznesowych. Nie liczy VAT: po zmianie ceny brutto jest nieznane (`null`), dopóki nie poda go backend.
 - Tryb demo działa w `pnpm dev:admin` i w buildzie z `VITE_ADMIN_DEMO=true`. Zwykły build produkcyjny nie zawiera danych demo i pokazuje ekran „panel niepołączony z API”.
-- Prawdziwy klient API powstanie razem z logowaniem administratorów (sesja w ciasteczkach HttpOnly, CSRF). Do tego czasu nie podłączaj zapisu do API i nie używaj tokenów dostępu API w przeglądarce.
+- Prawdziwy klient API powstanie razem z logowaniem administratorów przez OIDC (sesja w BFF). Do tego czasu nie podłączaj zapisu do API i nie używaj tokenów dostępu API w przeglądarce.
 - `src/components`: komponenty prezentacyjne i design system (tokeny w `src/styles/tokens.css`); `src/features/*`: strony i formularze; `src/lib`: router na History API, formatowanie kwot (stringi dziesiętne, bez floatów), `useAsync`.
 
 ## Wymagania do integracji z API (bez zmian w backendzie na tym etapie)
@@ -32,7 +35,7 @@ Kontrakt admina (`docs/api/openapi.yaml`) nie obejmuje jeszcze wszystkiego, czeg
 - Lista stanów magazynowych z filtrem dostępności (brak, niski stan, dostępny). Dziś magazyn korzysta z listy produktów.
 - Statystyki dashboardu (liczba produktów bez stanu, niski stan). Dziś liczone z jednej strony produktów.
 - Potwierdzenie nazw `propertyPath` w błędach walidacji (np. `onHand`, `categoryId`), które formularze mapują na pola.
-- Logowanie administratorów (sesja HttpOnly, CSRF) to osobny etap. Do tego czasu panel nie łączy się z API.
+- Logowanie administratorów przez OIDC (sesja w BFF) to osobny etap (M3). Do tego czasu panel nie łączy się z API.
 
 ## Komendy
 

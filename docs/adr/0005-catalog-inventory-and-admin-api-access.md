@@ -8,7 +8,7 @@
 Milestone 2 brings the first business endpoints: products and categories for the store,
 and their management for administrators.
 The specification ([01-placing-order.md](../specs/01-placing-order.md)) defines prices (R11–R14, section 3.4)
-and availability as stock minus reservations (R7), with reservations coming in Milestone 4.
+and availability as stock minus reservations (R7), with reservations coming in Milestone 5.
 Administrative operations change data, so they must not be reachable without authorisation.
 Accounts, login and roles of customers and administrators live in an external identity provider (Keycloak).
 
@@ -16,10 +16,10 @@ Accounts, login and roles of customers and administrators live in an external id
 
 1. **Two modules from the start.**
    - `Catalog` owns products (SKU, slug, name, description, unit net price, VAT rate, active flag, optional category) and the category tree.
-   - `Inventory` owns stock (`StockItem`: quantity on hand per product). Milestone 4 adds reservations there,
+   - `Inventory` owns stock (`StockItem`: quantity on hand per product). Milestone 5 adds reservations there,
      so the atomic reservation (R18–R20) touches one module.
    - `Shared\Domain` holds `Money` (integer grosze, PLN only), `VatRate` (23/8/5/0) and `LinePrice` (section 3.4),
-     because Ordering needs the same rules in Milestone 4.
+     because Ordering needs the same rules in Milestone 5.
 
 2. **Modules talk through ports, one Deptrac rule.**
    - Catalog declares `ProductAvailability` (Application); Inventory declares `KnownProducts` (Application)
@@ -31,7 +31,7 @@ Accounts, login and roles of customers and administrators live in an external id
      validation, serialization, security, messaging, DI…); only small value libraries
      (`symfony/uid`, `psr/clock`) are allowed there.
    - Availability of a product list is looked up once per page (`StockLevels::forProducts()`), never per product.
-   - `StockLevel` already exposes `onHand`, `reserved` and `available`; `reserved` is 0 until Milestone 4.
+   - `StockLevel` already exposes `onHand`, `reserved` and `available`; `reserved` is 0 until Milestone 5.
 
 3. **Category tree: adjacency list (`parent_id`) with recursive queries, not a nested set.**
    - A category is a root or has one parent; a product belongs to at most one category.
@@ -65,7 +65,7 @@ Accounts, login and roles of customers and administrators live in an external id
 
 5. **API addresses.**
    - Clients always call `/api/...` on their own origin. The proxy in front of the backend
-     (Vite and Next.js dev servers now, the central Caddy edge from stage 4) strips `/api`;
+     (the Vite dev server of the admin in development, the central Caddy edge in production) strips `/api`; the store calls the backend server-side only;
      Symfony routes have no prefix.
    - The contract is [`docs/api/openapi.yaml`](../api/openapi.yaml): `servers: [{url: /api}]` plus prefix-less paths,
      so the documented public address is the server URL plus the path.
@@ -147,6 +147,8 @@ Accounts, login and roles of customers and administrators live in an external id
 - The production image has no defaults: the backend needs the `OIDC_STORE_*` and `OIDC_ADMIN_*` variables
   (issuer, discovery URL, audience, clients) at runtime; `compose.prod.yaml` refuses to start without any
   of them. `apps/backend/.env` holds the development values.
-- `docs/api/openapi.yaml` is maintained by hand for now; contract tests and `packages/sdk` follow in stage 5.
-- Milestone 4 adds reservations in Inventory and changes only the `reserved` part of `StockLevels`;
+- Browser clients never hold the tokens: the admin panel and the store reach the API through their
+  backends-for-frontends ([architecture](../architecture.md), ADR-0002).
+- `docs/api/openapi.yaml` is maintained by hand for now; contract tests exist (ADR-0007); `packages/sdk` follows in stage 5.
+- Milestone 5 adds reservations in Inventory and changes only the `reserved` part of `StockLevels`;
   Catalog and the API already carry `reserved` and `available`.

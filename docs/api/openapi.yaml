@@ -821,7 +821,7 @@ components:
     Stock:
       type: object
       description: |
-        Units on hand, held by reservations (from Milestone 4; always 0 now) and
+        Units on hand, held by reservations (from Milestone 5; always 0 now) and
         available for sale: available = onHand - reserved.
       required: [onHand, reserved, available]
       properties:

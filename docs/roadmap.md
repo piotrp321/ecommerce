@@ -9,22 +9,28 @@ Podstawa biznesowa: [specs/01-placing-order.md](specs/01-placing-order.md). Ukł
 |---|---|---|---|
 | M1 | Szkielet projektu | Symfony 8.1, Docker Compose (FrankenPHP + PostgreSQL), Doctrine, PHPUnit, PHPStan, Deptrac, CI | zakończony |
 | M2 | Katalog produktów | Produkty (cena netto, stawka VAT, aktywność) i drzewo kategorii (Catalog), stan magazynowy (Inventory), publiczne API odczytu i API administracyjne (tokeny dostępu OIDC realmu `admin`), kontrakt [`docs/api/openapi.yaml`](api/openapi.yaml) ([ADR-0005](adr/0005-catalog-inventory-and-admin-api-access.md)) | zakończony |
-| M3 | Koszyk | Koszyk zalogowanego użytkownika | planowany |
-| M4 | Składanie zamówienia | Atomowa rezerwacja magazynowa, snapshot cen, idempotency key | planowany |
-| M5 | Cykl życia zamówienia | Płatności, anulowania, timeouty, powiadomienia, pozostałe reguły | planowany |
+| M3 | Tożsamość i dostęp | Keycloak (realmy `store` i `admin`), moduły `Customers` (Customer) i `Backoffice` (AdminUser), BFF sklepu z sesją w Redis, API backendu na tokenach dostępu OIDC ([architektura](architecture.md)) | w realizacji |
+| M4 | Koszyk | Koszyk dla gości i klientów, scalanie koszyka gościa po zalogowaniu | planowany |
+| M5 | Składanie zamówienia | Atomowa rezerwacja magazynowa, snapshot cen, idempotency key | planowany |
+| M6 | Cykl życia zamówienia | Płatności, anulowania, timeouty, powiadomienia, pozostałe reguły | planowany |
+
+## Infrastruktura
+
+| Element | Zakres | Status |
+|---|---|---|
+| Keycloak | Jedna instancja, realmy `store` i `admin` (M3) | w realizacji |
+| Redis sesji | `redis-session` dla sesji BFF sklepu (M3) | w realizacji |
+| Redis cache | Osobna instancja, gdy pojawi się potrzeba cache | planowany |
+| RabbitMQ, Elasticsearch | Opcjonalne profile Compose, bez integracji biznesowej; integracje powstają przy konkretnych przypadkach użycia | planowany |
 
 ## Migracja do monorepo
 
-Realizowana przed M2, jeden Pull Request na etap.
+Otwarte pozycje; jeden Pull Request na etap.
 
 | Etap | Zakres | Status |
 |---|---|---|
-| 1 | Symfony do `apps/backend`, obraz w `infra/docker/backend`, Makefile, Deptrac, CI | zakończony |
-| 2 | pnpm workspace i `apps/admin` (React + Vite), dev lokalnie i w Dockerze, obraz prod ([ADR-0002](adr/0002-frontend-workspace-and-admin.md)) | zakończony |
-| 3 | `apps/store` (Next.js, SSR), dev lokalnie i w Dockerze, obraz prod ([ADR-0003](adr/0003-store-nextjs.md)) | zakończony |
-| 4 | Topologia produkcyjna z centralnym edge Caddy, testy routingu i niezależnych wdrożeń ([ADR-0004](adr/0004-edge-proxy-and-production-topology.md)) | zakończony |
-| 5 | Lint kontraktu OpenAPI i testy kontraktowe backendu ([ADR-0007](adr/0007-api-contract-tests.md)); następnie `packages/sdk` generowany z kontraktu, uzgodniony z pracą nad sklepem i adminem | w trakcie |
-| 6 | Optymalizacja CI dla monorepo (tylko jeśli pomiary to uzasadnią) | planowany |
+| 5 | `packages/sdk` generowany z kontraktu OpenAPI, uzgodniony z pracą nad sklepem i adminem | planowany |
+| 6 | Optymalizacja CI dla monorepo, tylko przy mierzalnej potrzebie | planowany |
 
 ## Przed uruchomieniem produkcyjnym
 
@@ -34,6 +40,7 @@ Zagadnienia, które muszą być zamknięte przed pierwszym wdrożeniem na produk
 |---|---|---|
 | Trusted proxies w Symfony | `framework.trusted_proxies` / `trusted_headers` w `apps/backend/config`: backend za edge ma poprawnie rozpoznawać schemat (HTTPS), host i IP klienta z nagłówków `X-Forwarded-*`, ufając wyłącznie edge. Wymagane m.in. dla bezpiecznych ciasteczek, adresów bezwzględnych i limitów żądań ([ADR-0004](adr/0004-edge-proxy-and-production-topology.md)). | otwarte |
 | TLS i ACME na rzeczywistych domenach | Rekordy DNS dla `STORE_DOMAIN` i `ADMIN_DOMAIN`, otwarte porty 80/443, wydanie i odnowienie certyfikatów przez edge (`EDGE_GLOBAL_OPTIONS`, np. e-mail ACME), weryfikacja HSTS i przekierowań na produkcyjnych domenach. Testy w CI używają lokalnego CA. | otwarte |
-| Uwierzytelnianie administratorów | Logowanie do panelu admina z sesją w ciasteczkach `HttpOnly`/`Secure`/`SameSite` i ochroną CSRF. Administracyjne API backendu wymaga tokenu dostępu z rolą `admin` ([ADR-0005](adr/0005-catalog-inventory-and-admin-api-access.md)); panel uzyskuje go po stronie serwera, nigdy w przeglądarce. | otwarte |
+| Uwierzytelnianie administratorów | Panel admina przez OIDC (realm admin z MFA) i BFF. Administracyjne API backendu wymaga tokenu dostępu z rolą `admin` ([ADR-0005](adr/0005-catalog-inventory-and-admin-api-access.md)); panel uzyskuje go po stronie serwera, nigdy w przeglądarce. | otwarte |
+| Keycloak produkcyjny | Backup bazy, aktualizacje, SMTP do weryfikacji e-mail, konsola admina niepubliczna. | otwarte |
 
 Pozostałe punkty otwarte (np. kontener backendu w trybie read-only, wysoka dostępność) są opisane w ADR-0004.

@@ -10,7 +10,17 @@ Edukacyjny system e-commerce rozwijany jako monorepo. Projekt służy do nauki A
 
 - Wymagania biznesowe: `docs/specs/`. Nie zmieniaj ustalonych reguł bez decyzji użytkownika.
 - Zakres etapów: `docs/roadmap.md`. Realizuj wyłącznie bieżący etap.
-- Decyzje architektoniczne: `docs/adr/`. Nowa istotna decyzja = nowy ADR.
+- Architektura: `docs/architecture.md` (główne źródło prawdy o architekturze: stan aktualny i wyraźnie oddzielone plany).
+- Decyzje architektoniczne: `docs/adr/`. Nowa istotna decyzja = nowy ADR; zmiana obowiązującej decyzji = aktualizacja ADR w miejscu (ADR opisuje obowiązującą decyzję i jej uzasadnienie).
+
+## Dokumentacja
+
+- Dokumentacja opisuje wyłącznie aktualny, obowiązujący stan oraz wyraźnie oddzielone plany.
+- Przy zmianie architektury aktualizuj istniejące dokumenty, zastępując nieaktualne treści.
+- Nie pisz zdań typu „wcześniej X, teraz Y”. Nie prowadź changelogów architektury ani dzienników decyzji, nie archiwizuj treści czasowo i nie twórz mechanizmów czyszczenia. Historię przechowuje Git.
+- Nie zostawiaj nieaktualnych ADR jako obowiązujących. Nie twórz ADR tylko po to, żeby opisać zmianę: zmianę decyzji wprowadzasz w ADR w miejscu.
+- Nie usuwaj dokumentów bez zgody użytkownika.
+- Architektura (`docs/architecture.md`), specyfikacje, OpenAPI, roadmapa i `AGENTS.md` muszą być spójne. Głównym źródłem prawdy o architekturze jest `docs/architecture.md`.
 
 ## Struktura monorepo
 
@@ -21,7 +31,7 @@ Edukacyjny system e-commerce rozwijany jako monorepo. Projekt służy do nauki A
 - `infra/docker/<app>/`: obraz Docker danej aplikacji (Dockerfile i jego `Dockerfile.dockerignore`)
 - `infra/edge/`: edge proxy (Caddy), jedyny publiczny punkt wejścia produkcji: TLS, routing po domenie i ścieżce (`/api/*` → backend bez prefiksu)
 - `infra/scripts/`: skrypty kontroli prod (`check-prod-admin.sh`, `check-prod-store.sh`, `check-prod-stack.sh` dla całej topologii)
-- `docs/`: specyfikacje, roadmapa, ADR, kontrakt REST API `docs/api/openapi.yaml` (OpenAPI 3.1)
+- `docs/`: architektura (`architecture.md`), specyfikacje, roadmapa, ADR, kontrakt REST API `docs/api/openapi.yaml` (OpenAPI 3.1)
 - katalog główny: `compose.yaml` (wspólny, projekt dev `ecommerce`), `compose.override.yaml` (dev, porty tylko na localhost), `compose.prod.yaml` (osobny projekt `ecommerce-prod`, edge + trzy aplikacje, wymagane sekrety i domeny), `Makefile`, pnpm workspace (`package.json`, `pnpm-workspace.yaml`, jeden `pnpm-lock.yaml`), `.node-version`, `AGENTS.md`, `README.md`
 - `.claude/`: wspólna konfiguracja Claude Code ([ADR-0008](docs/adr/0008-agentic-sdlc-claude-code.md)): skill `/feature-delivery` (`skills/`), subagenci `developer`, `code-reviewer`, `qa-tester` (`agents/`), reguły `ask` (`settings.json`); pozostałe pliki `.claude/` (np. `settings.local.json`, `worktrees/`) są lokalne i ignorowane
 
