@@ -6,8 +6,11 @@ import { categoryHref } from './category-tree';
 import { Price } from './price';
 import { ProductImage } from './product-image';
 
-/** Main section of the product page: photo, name, gross price, availability and details. */
-export function ProductDetails({ product }: { product: Product }) {
+/**
+ * Main section of the product page: photo, name, gross price, availability and details.
+ * `isDemo`: the catalog is sample data (ADR-0006), which the ordering note says.
+ */
+export function ProductDetails({ product, isDemo }: { product: Product; isDemo: boolean }) {
   return (
     <article className="grid gap-8 md:grid-cols-2 lg:gap-16">
       <figure className="flex flex-col gap-2">
@@ -65,7 +68,9 @@ export function ProductDetails({ product }: { product: Product }) {
 
         <p className="flex gap-3 rounded-2xl border p-4 text-sm text-muted-foreground">
           <Info className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-          Zamawianie nie jest jeszcze dostępne: to demonstracyjna wersja sklepu, a koszyk powstanie w kolejnym etapie.
+          {isDemo
+            ? 'Zamawianie nie jest jeszcze dostępne: to demonstracyjna wersja sklepu, a koszyk powstanie w kolejnym etapie.'
+            : 'Zamawianie nie jest jeszcze dostępne: koszyk powstanie w kolejnym etapie.'}
         </p>
       </div>
     </article>

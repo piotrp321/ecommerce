@@ -1,24 +1,30 @@
 import type { Metadata, Viewport } from 'next';
 import { Geist, Instrument_Serif } from 'next/font/google';
+import { connection } from 'next/server';
 import type { ReactNode } from 'react';
 import { catalog } from '@/catalog';
 import { DemoNotice } from '@/components/layout/demo-notice';
 import { SiteFooter } from '@/components/layout/site-footer';
 import { SiteHeader } from '@/components/layout/site-header';
 import './globals.css';
-import { siteMetadata } from './site-metadata';
+import { requestSiteMetadata } from './site-metadata';
 
 // Self-hosted by next/font (downloaded at build time, no requests to Google at runtime).
 const sans = Geist({ subsets: ['latin', 'latin-ext'], variable: '--font-geist-sans' });
 const display = Instrument_Serif({ subsets: ['latin', 'latin-ext'], weight: '400', variable: '--font-instrument-serif' });
 
-export const metadata: Metadata = siteMetadata(catalog.isDemo);
+export function generateMetadata(): Promise<Metadata> {
+  return requestSiteMetadata();
+}
 
 export const viewport: Viewport = {
   themeColor: '#faf9f6',
 };
 
+// Every page, the 404 page included, is rendered per request: the catalog source and its
+// demo labels come from the runtime environment, and `next build` never calls the backend.
 export default async function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
+  await connection();
   const categories = await catalog.listCategories();
 
   return (
@@ -35,7 +41,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
         <div id="tresc" className="flex-1">
           {children}
         </div>
-        <SiteFooter categories={categories} />
+        <SiteFooter categories={categories} isDemo={catalog.isDemo} />
       </body>
     </html>
   );

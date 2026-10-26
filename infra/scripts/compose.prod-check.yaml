@@ -15,6 +15,12 @@ services:
   backend:
     volumes: !reset []
 
+  store:
+    environment:
+      # The check proves the API mode (ADR-0009): never inherit STORE_BACKEND_URL from
+      # .env or the shell (an empty value there selects the demo data).
+      STORE_BACKEND_URL: http://backend:80
+
   database:
     volumes: !reset []
     tmpfs:

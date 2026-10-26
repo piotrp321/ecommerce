@@ -20,7 +20,7 @@ export default async function HomePage() {
 
   return (
     <main className="flex flex-col gap-20 pb-4 sm:gap-24 [&>section]:w-full">
-      <Hero image={heroImage} />
+      <Hero image={heroImage} isDemo={catalog.isDemo} />
       <ValueProps />
       {categories.length > 0 ? <CategoryShowcase categories={categories} visuals={categoryVisuals} /> : null}
       {featured.length > 0 ? (

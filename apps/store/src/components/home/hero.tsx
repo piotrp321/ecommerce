@@ -5,7 +5,8 @@ import type { CatalogImage } from '@/catalog/types';
 import { ALL_PRODUCTS_HREF } from '@/components/catalog/category-tree';
 import { Button } from '@/components/ui/button';
 
-export function Hero({ image }: { image: CatalogImage }) {
+/** `isDemo`: the catalog is sample data (ADR-0006), which the badge says. */
+export function Hero({ image, isDemo }: { image: CatalogImage; isDemo: boolean }) {
   return (
     <section className="mx-auto max-w-7xl px-4 pt-6 sm:px-6 lg:px-8">
       <div className="relative isolate overflow-hidden rounded-[2rem] bg-primary text-primary-foreground">
@@ -21,9 +22,11 @@ export function Hero({ image }: { image: CatalogImage }) {
         <div
           className="flex min-h-[460px] max-w-2xl flex-col justify-end gap-5 p-7 sm:min-h-[540px] sm:p-12 lg:p-16 [&>h1]:font-display [&>h1]:text-7xl [&>h1]:leading-[0.9] [&>h1]:tracking-tight sm:[&>h1]:text-8xl lg:[&>h1]:text-9xl"
         >
-          <p className="w-fit rounded-full border border-white/30 bg-white/10 px-3 py-1 text-xs font-medium tracking-wide uppercase backdrop-blur">
-            Kolekcja demonstracyjna
-          </p>
+          {isDemo ? (
+            <p className="w-fit rounded-full border border-white/30 bg-white/10 px-3 py-1 text-xs font-medium tracking-wide uppercase backdrop-blur">
+              Kolekcja demonstracyjna
+            </p>
+          ) : null}
           <h1>Sklep</h1>
           <p className="max-w-lg text-lg text-white/85 sm:text-xl">
             Przedmioty do domu, pracy i codziennych rytuałów. Prosta forma, dobre materiały, uczciwe ceny brutto.
