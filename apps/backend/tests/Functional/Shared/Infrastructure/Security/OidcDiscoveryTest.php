@@ -13,10 +13,13 @@ use Symfony\Component\Security\Http\AccessToken\AccessTokenHandlerInterface;
 
 /**
  * Keys of both realms come from OIDC discovery: cached, and an unavailable
- * identity provider ends in 401 within 3 seconds (never 500 or a hanging request).
+ * identity provider means 401 within 3 seconds (never 500 or a hanging request).
  */
 final class OidcDiscoveryTest extends ApiTestCase
 {
+    private const float MAX_DURATION = 1.5;
+    private const float IDLE_TIMEOUT = 1.0;
+
     /**
      * The keys are cached in the cache.oidc pool (filesystem outside the tests)
      * for the provider's max-age. The test pool is an array that the kernel
@@ -61,15 +64,27 @@ final class OidcDiscoveryTest extends ApiTestCase
         return $handler;
     }
 
-    public function testTheDiscoveryClientHasTimeouts(): void
+    /**
+     * The time budget of an unavailable provider: the mocked HTTP client answers
+     * at once, so the limits are checked on the options of every discovery
+     * request. Discovery makes two sequential requests (the discovery document,
+     * then the JWKS), each limited to 1.5 s: at most 3 s per firewall.
+     */
+    public function testTheDiscoveryOfAFirewallTakesAtMostThreeSeconds(): void
     {
         $this->customer('GET', '/me');
+        $store = FakeOidcProvider::$requests;
+        FakeOidcProvider::reset();
         $this->admin('GET', '/admin/me');
+        $admin = FakeOidcProvider::$requests;
 
-        self::assertNotSame([], FakeOidcProvider::$requests);
-        foreach (FakeOidcProvider::$requests as $request) {
-            self::assertEquals(2, $request['timeout'], $request['url']);
-            self::assertEquals(3, $request['max_duration'], $request['url']);
+        foreach (['store' => $store, 'admin' => $admin] as $realm => $requests) {
+            self::assertCount(2, $requests, $realm.': discovery document and JWKS');
+            foreach ($requests as $request) {
+                self::assertEquals(self::IDLE_TIMEOUT, $request['timeout'], $request['url']);
+                self::assertEquals(self::MAX_DURATION, $request['max_duration'], $request['url']);
+            }
+            self::assertLessThanOrEqual(3.0, \count($requests) * self::MAX_DURATION);
         }
     }
 
@@ -84,11 +99,14 @@ final class OidcDiscoveryTest extends ApiTestCase
         }
     }
 
+    /**
+     * Maps every kind of failure to 401 (the duration is bounded by the options,
+     * see testTheDiscoveryOfAFirewallTakesAtMostThreeSeconds).
+     */
     #[DataProvider('unavailableProviders')]
     public function testAnUnavailableIdentityProviderMeans401(string $mode, string $realm): void
     {
         FakeOidcProvider::$mode = $mode;
-        $started = microtime(true);
 
         if ('store' === $realm) {
             $this->customer('GET', '/me');
@@ -96,7 +114,6 @@ final class OidcDiscoveryTest extends ApiTestCase
             $this->admin('GET', '/admin/me');
         }
 
-        self::assertLessThan(3.0, microtime(true) - $started);
         $this->assertProblem(401, 'The bearer token is invalid.');
         self::assertSame('Bearer error="invalid_token"', $this->client->getResponse()->headers->get('WWW-Authenticate'));
         self::assertSame(0, $this->connection()->fetchOne('SELECT count(*) FROM customers_customer'));

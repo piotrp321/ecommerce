@@ -23,13 +23,15 @@ services:
     # please note that last definitions always *replace* previous ones
 
     # HTTP client of OIDC discovery (both API firewalls, security.yaml): an
-    # unreachable or slow identity provider ends in 401 within 3 seconds instead
-    # of holding the request. Overrides the SecurityBundle's template, which each
-    # firewall extends with its discovery base_uri.
+    # unreachable or slow identity provider means 401 within 3 seconds instead of
+    # holding the request. Discovery makes two sequential requests (discovery
+    # document, then JWKS), so each one gets at most 1.5 s.
+    # Overrides the SecurityBundle's template, which each firewall extends with
+    # its discovery base_uri.
     app.oidc_discovery.http_client:
         class: Symfony\Contracts\HttpClient\HttpClientInterface
         factory: ['@http_client', 'withOptions']
-        arguments: [{ timeout: 2, max_duration: 3 }]
+        arguments: [{ timeout: 1, max_duration: 1.5 }]
     security.access_token_handler.oidc_discovery.http_client:
         class: Symfony\Contracts\HttpClient\HttpClientInterface
         abstract: true

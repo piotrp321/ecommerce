@@ -106,8 +106,9 @@ Accounts, login and roles of customers and administrators live in an external id
        only a local status: a blocked administrator gets 403 whatever the token says.
    - Discovery documents and keys are cached in the `cache.oidc` pool (filesystem; an array in tests)
      for the JWKS `Cache-Control: max-age` (1 hour without it, at most 30 days); failures are not cached.
-     The discovery HTTP client has a 2 s timeout and a 3 s maximum duration: an unreachable or slow
-     identity provider means 401, never 500 or a hanging request.
+     Discovery makes two sequential requests (the discovery document, then the JWKS); its HTTP client
+     limits each to 1.5 s (1 s idle timeout), so an unreachable or slow identity provider means 401
+     within 3 s, never 500 or a hanging request.
    - Errors (RFC 6750), as `application/problem+json` with a generic `detail` (the reason is only logged):
      401 with `WWW-Authenticate: Bearer` without a token or `Bearer error="invalid_token"` for a rejected one,
      403 with `Bearer error="insufficient_scope"` for a valid token without the required role.
