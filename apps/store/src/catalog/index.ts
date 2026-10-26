@@ -1,4 +1,5 @@
 import { cache } from 'react';
+import { backendBaseUrl } from '@/lib/backend-url';
 import { createDemoCatalogSource } from './demo/demo-source';
 import { createHttpCatalogSource } from './http/http-source';
 import type { CatalogSource } from './source';
@@ -13,12 +14,12 @@ type Env = Record<string, string | undefined>;
  * An invalid URL is an error, never a silent fallback to the demo data.
  */
 export function createCatalogSource(env: Env): CatalogSource {
-  const backendUrl = env.STORE_BACKEND_URL?.trim() ?? '';
-  if (backendUrl === '') {
+  const baseUrl = backendBaseUrl(env);
+  if (baseUrl === null) {
     return createDemoCatalogSource({ delayMs: Number(env.STORE_DEMO_DELAY_MS ?? 0) || 0 });
   }
 
-  return createHttpCatalogSource({ baseUrl: backendUrl });
+  return createHttpCatalogSource({ baseUrl });
 }
 
 // Created on first use, from the environment of the running server (not of `next build`),

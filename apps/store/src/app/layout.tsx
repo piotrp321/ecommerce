@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import { Geist, Instrument_Serif } from 'next/font/google';
 import { connection } from 'next/server';
 import type { ReactNode } from 'react';
+import { hasSessionCookie } from '@/auth/session';
 import { catalog } from '@/catalog';
 import { DemoNotice } from '@/components/layout/demo-notice';
 import { SiteFooter } from '@/components/layout/site-footer';
@@ -26,6 +27,8 @@ export const viewport: Viewport = {
 export default async function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   await connection();
   const categories = await catalog.listCategories();
+  // The cookie only, never the session store: catalog pages work while Redis is down.
+  const signedIn = await hasSessionCookie();
 
   return (
     <html lang="pl" className={`${sans.variable} ${display.variable}`}>
@@ -37,7 +40,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
           Przejdź do treści
         </a>
         {catalog.isDemo ? <DemoNotice /> : null}
-        <SiteHeader categories={categories} />
+        <SiteHeader categories={categories} signedIn={signedIn} />
         <div id="tresc" className="flex-1">
           {children}
         </div>

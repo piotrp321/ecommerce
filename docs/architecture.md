@@ -10,7 +10,7 @@ Główne źródło prawdy o architekturze systemu. Dokument ma dwie wyraźnie od
 |---|---|---|
 | edge | Caddy (`infra/edge`) | Jedyny publiczny punkt wejścia produkcji: TLS, routing po domenie (`STORE_DOMAIN`, `ADMIN_DOMAIN`, `AUTH_DOMAIN`) i ścieżce ([ADR-0004](adr/0004-edge-proxy-and-production-topology.md)) |
 | backend | Symfony, DDD + Hexagonal (`apps/backend`) | Jedyne źródło logiki biznesowej; bezstanowe REST API |
-| store | Next.js, SSR (`apps/store`) | Interfejs sklepu; katalog czyta z backendu po stronie serwera |
+| store | Next.js, SSR (`apps/store`) | Interfejs sklepu; katalog czyta z backendu po stronie serwera; BFF logowania klienta (OIDC, sesje w Redis) |
 | admin | React + Vite, SPA (`apps/admin`) | Interfejs administracyjny; dziś na danych demonstracyjnych, bez połączenia z API |
 | database | PostgreSQL | Dane backendu (dostęp tylko z backendu) i osobna baza `keycloak` z własną rolą |
 | keycloak | Keycloak 26.8.0 (`infra/docker/keycloak`, realmy w `infra/keycloak/realms`) | Dostawca tożsamości (OIDC): realmy `store` i `admin` |
@@ -20,6 +20,7 @@ Główne źródło prawdy o architekturze systemu. Dokument ma dwie wyraźnie od
 
 - Przeglądarka woła `/api/...` na własnej domenie (same-origin). Edge przekazuje to do backendu bez prefiksu `/api`; w dev robi to serwer Vite admina. Sklep nie ma proxy `/api`: woła backend wyłącznie po stronie serwera (`STORE_BACKEND_URL`).
 - Store renderuje katalog na serwerze i woła backend bezpośrednio (server-to-server, `STORE_BACKEND_URL`, bez edge i bez prefiksu `/api`) ([ADR-0009](adr/0009-store-catalog-api.md)).
+- Store jako BFF loguje klienta w Keycloaku (szczegóły w „Store jako BFF” niżej) i woła backend z tokenem Bearer użytkownika, również server-to-server.
 - Nagłówek `Authorization` przechodzi przez edge bez zmian.
 - Przeglądarka loguje się na `https://AUTH_DOMAIN` (w dev `http://localhost:8180`). Wymiana kodu na tokeny, discovery i JWKS idą siecią wewnętrzną (`http://keycloak:8080`), nie przez edge.
 - Tylko edge ma publiczne porty; backend, store, admin, Keycloak, Redis i baza nie są publikowane. Redis sesji jest w osobnej sieci `sessions`, wspólnej tylko ze sklepem.
@@ -38,6 +39,19 @@ Granice pilnuje Deptrac (`apps/backend/deptrac.yaml`); moduły komunikują się 
 | Cart | planowany | Koszyk gościa i klienta |
 | Ordering | planowany | Składanie i cykl życia zamówienia |
 | Payments | planowany | Płatności |
+
+### Store jako BFF
+
+Kod: `apps/store/src/auth`, zasady w [`apps/store/AGENTS.md`](../apps/store/AGENTS.md). Compose dev i prod uruchamiają Keycloak i `redis-session` i przekazują usłudze `store` zmienne auth (issuer dev `http://localhost:${KEYCLOAK_PORT}/realms/store`, prod `https://${AUTH_DOMAIN}/realms/store`, wewnętrznie `http://keycloak:8080/realms/store`, Redis jako użytkownik ACL `store`); sklep działa w trybie `oidc`. Pełny przepływ logowania sprawdza `infra/scripts/check-auth-flow.sh`: w dev ręcznie, w topologii prod przez edge w ramach `check-prod-stack.sh`.
+
+- Next.js jest poufnym klientem `store-bff` (realm `store`): Authorization Code + PKCE S256, `state`, `nonce` i parametr `iss` (RFC 9207) wymagane. Tokeny wyłącznie po stronie serwera; w przeglądarce tylko nieprzezroczysty identyfikator sesji w ciasteczku `__Host-store_session` (`HttpOnly`, `Secure`, `SameSite=Lax`).
+- Konfiguracja w runtime: `STORE_AUTH_MODE` (`oidc` domyślnie; `disabled` tylko z `STORE_ENVIRONMENT=development` albo `test`), `STORE_PUBLIC_URL`, `STORE_OIDC_ISSUER` (issuer publiczny), opcjonalnie `STORE_OIDC_INTERNAL_URL` (ten sam issuer w sieci wewnętrznej, ze ścieżką realmu, np. `http://keycloak:8080/realms/store`; przez niego idą discovery, token endpoint i JWKS), `STORE_OIDC_CLIENT_ID`, `STORE_OIDC_CLIENT_SECRET`, `STORE_REDIS_URL`, `STORE_SESSION_ENC_KEYS`. Bez kompletnej konfiguracji w trybie `oidc` serwer sklepu nie startuje.
+- Sesje w `redis-session` (użytkownik ACL `store`, klucze z prefiksem `store:`, każdy z TTL): klucz rekordu to hash identyfikatora sesji, tokeny szyfrowane AES-256-GCM (pierścień kluczy z `kid`). Sesja wygasa po 30 min bezczynności, najpóźniej po 12 h.
+- Odświeżanie tokenów: jedno wywołanie token endpointu na sesję także przy wielu replikach (lock w Redis i zapis compare-and-set).
+- Ochrona CSRF: każde żądanie zmieniające stan (Server Actions, także formularz bez JavaScriptu) musi mieć `Origin` równy `STORE_PUBLIC_URL` (bez `Origin` tylko z `Sec-Fetch-Site: same-origin`); inaczej proxy Next.js (`src/proxy.ts`) odpowiada 403, zanim żądanie dotrze do akcji.
+- Wylogowanie: RP-initiated (`end_session` z `id_token_hint`) oraz back-channel (`POST /auth/backchannel-logout`, wołany przez Keycloak w sieci wewnętrznej); oba unieważniają sesję we wszystkich replikach.
+- Katalog nie zależy od Redisa ani Keycloaka: przy ich awarii strony katalogu działają, a trasy logowania odpowiadają 503.
+- Profil klienta (`/konto`): `GET /me` backendu (server-to-server, `STORE_BACKEND_URL`) z access tokenem sesji jako Bearer (realm `store`, audience `store-api`); odpowiedź `{id, email | null, emailVerified}` jest mapowana pole po polu. 401 → jeden wymuszony refresh i ponowienie; drugi 401 usuwa sesję i kończy się stroną błędu (`SessionRejectedError`), bez przekierowania na logowanie. 403 i inne błędy → strona błędu. Autoryzacja zostaje na backendzie.
 
 ### Bezpieczeństwo
 
@@ -60,6 +74,7 @@ Backend jest bezstanowy: przy każdym żądaniu sam waliduje token dostępu OIDC
 | `GET /admin/me` | `{id, email \| null, roles}` |
 
 - Powiązanie z tożsamością zewnętrzną to para (issuer, `sub`), unikalna w `Customers` i `Backoffice`; rekord powstaje przy pierwszym żądaniu (just-in-time), e-mail jest synchronizowany z tokenu. Backend nie przechowuje haseł ani ról: role pochodzą z tokenu, `AdminUser` ma tylko lokalną blokadę (403). Ryzyko: zmiana `AUTH_DOMAIN` zmienia `iss`, więc wymaga migracji powiązań (issuer, `sub`).
+- Logowanie klienta sklepu: BFF opisany w „Store jako BFF”; tokeny nigdy nie trafiają do przeglądarki.
 - Konfiguracja: zmienne `OIDC_STORE_*` i `OIDC_ADMIN_*` (wartości dev w `apps/backend/.env` i `compose.override.yaml`, w produkcji wymagane przez `compose.prod.yaml`); tokeny wydaje Keycloak (sekcja „Tożsamość (Keycloak)”).
 
 ### Tożsamość (Keycloak)
@@ -74,7 +89,7 @@ Backend jest bezstanowy: przy każdym żądaniu sam waliduje token dostępu OIDC
 
 - Osobny Redis `redis-session` (`redis:8.8.2-alpine`, `noeviction`, AOF): ACL z wyłączonym użytkownikiem `default`, użytkownik `store` ograniczony do kluczy `store:*` i poleceń magazynu sesji, `ops` do administracji. Definicja i ACL są wspólne dla dev i prod (`compose.yaml`).
 - Prod: nie-root (`redis`), `read_only`, `cap_drop: ALL`, bez portów, tylko w sieci `sessions` ze sklepem.
-- Sklep dostaje komplet konfiguracji logowania i sesji (`STORE_AUTH_MODE=oidc`, `STORE_OIDC_*`, `STORE_REDIS_URL`, `STORE_SESSION_ENC_KEYS`); kod BFF opisuje część „Planowane”.
+- Sklep dostaje komplet konfiguracji logowania i sesji (`STORE_AUTH_MODE=oidc`, `STORE_OIDC_*`, `STORE_REDIS_URL`, `STORE_SESSION_ENC_KEYS`); kod BFF opisuje „Store jako BFF”.
 
 ## Planowane (zatwierdzone, w realizacji)
 
@@ -104,11 +119,6 @@ Przeglądarka
 
 Tokeny dokleja po stronie serwera BFF sklepu oraz oauth2-proxy / admin-bff; SPA admina i przeglądarka ich nie widzą. Walidację tokenów w backendzie opisuje część „Stan aktualny”.
 
-### Store jako BFF
-
-- Next.js będzie pełnił rolę BFF: logowanie Authorization Code + PKCE S256 (klient `store-bff`), tokeny wyłącznie po stronie serwera, w przeglądarce tylko identyfikator sesji w ciasteczku.
-- Sesje w `redis-session` (część „Stan aktualny”). Tokeny w Redis szyfrowane AES-256-GCM, klucz rekordu to hash identyfikatora sesji.
-- Store wywołuje backend z tokenem Bearer użytkownika; autoryzacja zostaje na backendzie.
 
 ### Admin
 

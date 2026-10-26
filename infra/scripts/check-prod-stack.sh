@@ -2,7 +2,8 @@
 # Runs the whole production topology (edge, backend, store, admin, Keycloak, Redis for the
 # store sessions, PostgreSQL) in an isolated, ephemeral Compose project and checks
 # configuration, routing, exposure, privileges, backend runtime behaviour, the browser
-# login through the edge (authorization code with PKCE for store-bff) and independent
+# login through the edge (authorization code with PKCE for store-bff), the store sign-in
+# flow (infra/scripts/check-auth-flow.sh) and independent
 # redeployment of each service.
 # Generated secrets are never printed nor written to disk.
 # Ports: CHECK_PROD_HTTP_PORT (default 8080), CHECK_PROD_HTTPS_PORT (default 8443).
@@ -345,6 +346,18 @@ me="$(fetch "$STORE_DOMAIN" /api/me -H "Authorization: Bearer ${STORE_ACCESS_TOK
 [ "$(json_string userinfo_endpoint "$(auth_curl "${AUTH}/realms/store/.well-known/openid-configuration" | compact)")" = "${AUTH}/realms/store/protocol/openid-connect/userinfo" ] \
 	&& [ "$(auth_curl -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${STORE_ACCESS_TOKEN}" "${AUTH}/realms/store/protocol/openid-connect/userinfo")" = "404" ] \
 	&& pass "public userinfo endpoint -> 404 even with a valid token" || fail "public userinfo with a valid token"
+
+echo "== Store sign-in through the edge (infra/scripts/check-auth-flow.sh)"
+# The store BFF end to end with the same customer: login, __Host-store_session, /konto from
+# GET /me, CSRF, RP-initiated and back-channel logout (kcadm in this project's keycloak).
+# The password goes through the environment only.
+if STORE_URL="https://${STORE_DOMAIN}" CHECK_AUTH_USER="$customer" CHECK_AUTH_PASSWORD="$customer_password" CHECK_AUTH_INSECURE=1 \
+	CHECK_AUTH_CONNECT_TO="${STORE_DOMAIN}:443:127.0.0.1:${HTTPS_PORT} ${AUTH_DOMAIN}:443:127.0.0.1:${HTTPS_PORT}" \
+	CHECK_AUTH_KEYCLOAK_COMPOSE="docker compose ${COMPOSE_FILES[*]}" ./infra/scripts/check-auth-flow.sh | sed 's/^/  /'; then
+	pass "store sign-in flow through the edge (check-auth-flow.sh)"
+else
+	fail "store sign-in flow through the edge (check-auth-flow.sh)"
+fi
 
 echo "== Admin realm: no password grant through admin-cli (OTP cannot be bypassed)"
 admin_user_password="Ca-$(openssl rand -hex 12)"

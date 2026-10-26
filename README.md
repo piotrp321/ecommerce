@@ -207,9 +207,8 @@ Inna wersja Node niż w `.node-version` kończy `pnpm install` błędem (`engine
 | `make check` | Wszystkie bramki jakości: obowiązkowe przed commitem |
 | `make contract-lint` | Lint kontraktu API `docs/api/openapi.yaml` (Redocly) |
 | `make build-prod` | Budowa obrazów produkcyjnych (bez sekretów) |
-| `make check-prod` | Kontrola obrazów admina (8081) i sklepu (8082), całej topologii prod z edge (8080/8443) i przepływu logowania (`stack-check-auth`) |
+| `make check-prod` | Kontrola obrazów admina (8081) i sklepu (8082) oraz całej topologii prod z edge (8080/8443), w tym przepływu logowania (`infra/scripts/check-auth-flow.sh`) |
 | `make edge-build-prod` / `make keycloak-build-prod` / `make stack-check-prod` | Obraz edge / obraz Keycloaka / kontrola całej topologii prod |
-| `make stack-check-auth` | Kontrola logowania w sklepie end to end (`infra/scripts/check-auth-flow.sh`); dopóki skryptu nie ma, cel kończy się sukcesem z komunikatem |
 | `make backend-composer c="…"` / `make backend-console c="…"` | Composer i `bin/console` w kontenerze |
 | `make backend-migrate` | Migracje bazy danych (nie są uruchamiane automatycznie) |
 | `make backend-test` | PHPUnit (suity `unit` i `functional`), najpierw `make backend-db-test` |
@@ -416,8 +415,9 @@ Obraz sprawdza osobno `make store-check-prod` na `127.0.0.1:8082` (bez backendu 
 
 `make check-prod` uruchamia kolejno:
 - `make admin-check-prod` i `make store-check-prod` (opisane wyżej),
-- `make stack-check-prod`, który uruchamia całą topologię (edge, backend, sklep, admin, Keycloak, Redis sesji, PostgreSQL) w tymczasowym projekcie `ecommerce-prod-check`, z edge na portach 8080/8443 (zmiana: `CHECK_PROD_HTTP_PORT`, `CHECK_PROD_HTTPS_PORT`), obok działającego dev,
-- `make stack-check-auth`, który uruchamia `infra/scripts/check-auth-flow.sh` (logowanie przez BFF sklepu), gdy skrypt istnieje.
+- `make stack-check-prod`, który uruchamia całą topologię (edge, backend, sklep, admin, Keycloak, Redis sesji, PostgreSQL) w tymczasowym projekcie `ecommerce-prod-check`, z edge na portach 8080/8443 (zmiana: `CHECK_PROD_HTTP_PORT`, `CHECK_PROD_HTTPS_PORT`), obok działającego dev; przed zatrzymaniem stosu woła `infra/scripts/check-auth-flow.sh` przez edge (`https://store.localhost`).
+
+Ten sam skrypt sprawdza logowanie w działającym dev: `make up`, `make keycloak-dev-seed`, potem `STORE_URL=http://localhost:3000 CHECK_AUTH_PASSWORD=… CHECK_AUTH_KEYCLOAK_COMPOSE="docker compose" infra/scripts/check-auth-flow.sh` (bez `CHECK_AUTH_KEYCLOAK_COMPOSE` pomija krok back-channel logout).
 
 Kontrola stosu używa testowych domen `store.localhost`, `admin.localhost` i `auth.localhost` z lokalnym CA Caddy. Dane trzyma w tmpfs, więc nie zostawia wolumenów, a sekrety generuje na czas testu i nigdzie ich nie zapisuje. Sprawdza:
 
