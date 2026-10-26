@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tests\Support;
 
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\DriverManager;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 
@@ -23,6 +24,29 @@ abstract class DatabaseTestCase extends KernelTestCase
     protected static function connection(): Connection
     {
         return self::getContainer()->get('doctrine.dbal.default_connection');
+    }
+
+    /**
+     * Another session to the same test database, independent of Doctrine's
+     * connection (e.g. a concurrent request). The caller closes it.
+     */
+    protected static function secondConnection(): Connection
+    {
+        $params = self::connection()->getParams();
+        $value = static function (string $key) use ($params): string {
+            \assert(isset($params[$key]) && (\is_string($params[$key]) || \is_int($params[$key])));
+
+            return (string) $params[$key];
+        };
+
+        return DriverManager::getConnection([
+            'driver' => 'pdo_pgsql',
+            'host' => $value('host'),
+            'port' => (int) $value('port'),
+            'dbname' => $value('dbname'),
+            'user' => $value('user'),
+            'password' => $value('password'),
+        ]);
     }
 
     protected static function entityManager(): EntityManagerInterface

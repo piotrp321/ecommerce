@@ -187,6 +187,14 @@ SELECT table_name || '=' || (xpath('/row/c/text()', query_to_xml(format('select 
 FROM information_schema.tables WHERE table_schema = 'public' ORDER BY 1;
 SQL
 }
+# The fingerprint without the identity tables, which the backend fills on the first
+# request of a token (GET /me, /admin/me below): without_identities <fingerprint>
+without_identities() { sed -E 's/(backoffice_admin_user|customers_customer)=[0-9]+ ?//g' <<<"$1"; }
+# Rows of an identity table for one token subject: identity_rows <table> <sub>
+identity_rows() {
+	printf "SELECT count(*) FROM %s WHERE subject = :'sub';\n" "$1" \
+		| compose exec -T -e SUB="$2" database sh -c 'exec psql -X -At --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" -v sub="$SUB"' 2>/dev/null || true
+}
 # Connects as the keycloak role (password from the container environment): as_keycloak <database>
 # as_keycloak <database> [sql] (default SELECT 1)
 as_keycloak() {
@@ -211,6 +219,12 @@ published_bindings() {
 keycloak_ports_ok() { [ "$(tr -s ' ' <<<"$1" | sed 's/ $//')" = "8080/tcp=127.0.0.1:$2" ]; }
 health() { docker inspect -f '{{.State.Health.Status}}' "$(compose ps -q "$1")" 2>/dev/null || true; }
 backend_health() { curl -sk --max-time 10 "https://localhost:${HTTPS_PORT}/health" || true; }
+# Backend API through its Caddy with a bearer token (through the curl configuration on
+# stdin, never on a command line): backend_api <path> <access token>; body, then the status.
+backend_api() {
+	printf 'header = "Authorization: Bearer %s"\nheader = "Accept: application/json"\n' "$2" \
+		| curl -sk --max-time 10 -K - -w '\n%{http_code}' "https://localhost:${HTTPS_PORT}$1" || true
+}
 store_home_ok() { curl -s --max-time 120 "http://localhost:${STORE_PORT}/" | grep -q '<h1>Sklep</h1>'; }
 
 echo "== Development stack (project ${PROJECT}, Keycloak on ${KEYCLOAK_PORT}, Redis on ${REDIS_PORT})"
@@ -358,6 +372,11 @@ claims="$(jwt_payload "$(json_string access_token "$tokens")")"
 expect_all "store: access token from the internal token endpoint has the public issuer, aud store-api, azp store-bff, typ, e-mail claims" "$claims" \
 	"\"iss\":\"${KC}/realms/store\"" '"azp":"store-bff"' '"typ":"Bearer"' '"email_verified":true' "\"email\":\"${KEYCLOAK_DEV_CUSTOMER_EMAIL}\"" '"sub":"'
 grep -qE '"aud":("store-api"|\[[^]]*"store-api")' <<<"$claims" && pass "store: aud contains store-api" || fail "store: aud without store-api (token error '$(error_of "$tokens")')"
+# The backend accepts the real token (discovery and JWKS inside the network, ADR-0005).
+customer_sub="$(json_string sub "$claims")"
+me="$(backend_api /me "$(json_string access_token "$tokens")")"
+[ "$(tail -n1 <<<"$me")" = "200" ] && has "$me" "\"email\":\"${KEYCLOAK_DEV_CUSTOMER_EMAIL}\"" \
+	&& pass "backend: GET /me with the customer's access token -> 200" || fail "backend: GET /me with the customer's access token -> HTTP $(tail -n1 <<<"$me")"
 exp="$(json_number exp "$claims")" iat="$(json_number iat "$claims")"
 [ -n "$exp" ] && [ -n "$iat" ] && [ $((exp - iat)) -eq 300 ] && pass "store: access token lifetime 300 s" || fail "store: access token lifetime (exp '${exp}', iat '${iat}')"
 challenge="$(printf '%s' "$(openssl rand -hex 32)" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')"
@@ -374,6 +393,10 @@ claims="$(jwt_payload "$(json_string access_token "$tokens")")"
 expect_all "admin: access token has the public issuer, azp admin-bff, resource_access.admin-api.roles [admin]" "$claims" \
 	"\"iss\":\"${KC}/realms/admin\"" '"azp":"admin-bff"' '"typ":"Bearer"' '"resource_access":{"admin-api":{"roles":["admin"]}}' '"sub":"'
 grep -qE '"aud":("admin-api"|\[[^]]*"admin-api")' <<<"$claims" && pass "admin: aud contains admin-api" || fail "admin: aud without admin-api (token error '$(error_of "$tokens")')"
+admin_sub="$(json_string sub "$claims")"
+me="$(backend_api /admin/me "$(json_string access_token "$tokens")")"
+[ "$(tail -n1 <<<"$me")" = "200" ] && has "$me" '"roles":["ROLE_ADMIN"]' \
+	&& pass "backend: GET /admin/me with the admin's access token -> 200 (ROLE_ADMIN)" || fail "backend: GET /admin/me with the admin's access token -> HTTP $(tail -n1 <<<"$me")"
 # The logged-in admin asks to delete the OTP credential (application initiated action);
 # the confirmation is accepted if Keycloak shows it. The credential must stay.
 admin_id="$(json_string id "$(kcadm_get users -r admin -q "username=${KEYCLOAK_DEV_ADMIN_USERNAME}" --fields id)")"
@@ -476,7 +499,13 @@ make_dev keycloak-dev-seed >"$work/seed3.log" 2>&1 && [ "$(grep -c 'already exis
 public="$(curl -s --max-time 10 "${KC}/realms/store/.well-known/openid-configuration" | compact || true)"
 [ "$(json_string issuer "$public")" = "${KC}/realms/store" ] && pass "keycloak: discovery works after the restart" || fail "keycloak discovery after the restart"
 app_after="$(app_fingerprint)"
-[ "$app_after" = "$app_before" ] && pass "application data untouched (tables and row counts identical)" || fail "application data changed: before '${app_before}', after '${app_after}'"
+[ "$(without_identities "$app_after")" = "$(without_identities "$app_before")" ] \
+	&& pass "application data untouched apart from the identity tables (tables and row counts identical)" || fail "application data changed: before '${app_before}', after '${app_after}'"
+# GET /me and /admin/me registered the seed users just in time, once each.
+[ "$(identity_rows customers_customer "$customer_sub")" = "1" ] && pass "backend: one customer registered for the seed customer (just in time)" \
+	|| fail "backend: customers for the seed customer: '$(identity_rows customers_customer "$customer_sub")'"
+[ "$(identity_rows backoffice_admin_user "$admin_sub")" = "1" ] && pass "backend: one administrator registered for the seed admin (just in time)" \
+	|| fail "backend: administrators for the seed admin: '$(identity_rows backoffice_admin_user "$admin_sub")'"
 redis_as store DEL store:dev-check:persist >/dev/null
 
 echo

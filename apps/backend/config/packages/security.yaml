@@ -1,7 +1,12 @@
 security:
-    # No user accounts yet. The admin API identity comes from the token handler.
+    # Identities come from OpenID Connect access tokens (ADR-0005), validated
+    # statelessly with the keys from OIDC discovery; the providers register the
+    # customer or administrator on their first request.
     providers:
-        no_users: { memory: null }
+        customers:
+            id: App\Customers\Infrastructure\Security\CustomerUserProvider
+        admin_users:
+            id: App\Backoffice\Infrastructure\Security\AdminUserProvider
 
     firewalls:
         dev:
@@ -9,21 +14,52 @@ security:
             pattern: ^/(_profiler|_wdt|assets|build)/
             security: false
         # Administrative API: every route under /admin/ (writes included).
-        # INTERIM bearer token from the ADMIN_API_TOKEN secret, see ADR-0005.
+        # Tokens of the admin realm; the roles come from the token
+        # (AdminUserProvider). typ/azp: AdminAccessTokenHandler.
         admin_api:
             pattern: ^/admin/
             stateless: true
-            provider: no_users
+            provider: admin_users
             access_token:
-                token_handler: App\Shared\Infrastructure\Security\AdminApiTokenHandler
+                token_handler:
+                    oidc:
+                        discovery:
+                            base_uri: '%env(OIDC_ADMIN_DISCOVERY_URL)%'
+                            cache: { id: cache.oidc }
+                        issuers: ['%env(OIDC_ADMIN_ISSUER)%']
+                        audience: '%env(OIDC_ADMIN_AUDIENCE)%'
+                        algorithms: [RS256]
                 failure_handler: App\Shared\Infrastructure\Security\ApiSecurityResponses
             entry_point: App\Shared\Infrastructure\Security\ApiSecurityResponses
             access_denied_handler: App\Shared\Infrastructure\Security\ApiSecurityResponses
-        # Public read-only API and /health: no authentication.
-        main:
-            pattern: ^/
+        # Public read-only API and /health: no authentication, so a token sent
+        # along is ignored (a stateless firewall cannot be lazy).
+        public:
+            pattern: ^/(health$|catalog/)
             security: false
+        # Everything else (deny by default, see access_control), e.g. /me:
+        # tokens of the store realm. typ/azp: CustomerAccessTokenHandler.
+        store_api:
+            pattern: ^/
+            stateless: true
+            provider: customers
+            access_token:
+                token_handler:
+                    oidc:
+                        discovery:
+                            base_uri: '%env(OIDC_STORE_DISCOVERY_URL)%'
+                            cache: { id: cache.oidc }
+                        issuers: ['%env(OIDC_STORE_ISSUER)%']
+                        audience: '%env(OIDC_STORE_AUDIENCE)%'
+                        algorithms: [RS256]
+                failure_handler: App\Shared\Infrastructure\Security\ApiSecurityResponses
+            entry_point: App\Shared\Infrastructure\Security\ApiSecurityResponses
+            access_denied_handler: App\Shared\Infrastructure\Security\ApiSecurityResponses
 
-    # Note: Only the *first* matching rule is applied
+    # Only the first matching rule is applied. Deny by default: a new route
+    # outside /health and /catalog/ requires a signed-in customer. The public
+    # rule repeats the public firewall's pattern.
     access_control:
         - { path: ^/admin/, roles: ROLE_ADMIN }
+        - { path: ^/(health$|catalog/), roles: PUBLIC_ACCESS }
+        - { path: ^/, roles: ROLE_CUSTOMER }

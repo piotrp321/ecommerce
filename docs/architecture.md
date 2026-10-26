@@ -12,7 +12,9 @@ Główne źródło prawdy o architekturze systemu. Dokument ma dwie wyraźnie od
 | backend | Symfony, DDD + Hexagonal (`apps/backend`) | Jedyne źródło logiki biznesowej; bezstanowe REST API |
 | store | Next.js, SSR (`apps/store`) | Interfejs sklepu; katalog czyta z backendu po stronie serwera; BFF logowania klienta (OIDC, sesje w Redis) |
 | admin | React + Vite, SPA (`apps/admin`) | Interfejs administracyjny; dziś na danych demonstracyjnych, bez połączenia z API |
-| database | PostgreSQL | Dane backendu; dostęp tylko z backendu |
+| database | PostgreSQL | Dane backendu; dostęp tylko z backendu (Keycloak ma w nim osobną bazę i rolę) |
+| keycloak | Keycloak 26.8.0 (Compose dev) | Tożsamość: realmy `store` i `admin`, OIDC |
+| redis-session | Redis 8.8.2 (Compose dev) | Sesje BFF sklepu (`noeviction`, AOF, ACL) |
 
 ### Przepływy komunikacji
 
@@ -30,14 +32,22 @@ Granice pilnuje Deptrac (`apps/backend/deptrac.yaml`); moduły komunikują się 
 |---|---|---|
 | Catalog | działa | Produkty (cena netto, stawka VAT, aktywność) i drzewo kategorii |
 | Inventory | działa | Stan magazynowy |
-| Shared | działa | Wspólne obiekty wartości (`Money`, `VatRate`, `LinePrice`), infrastruktura bezpieczeństwa |
+| Customers | działa | Klienci sklepu (agregat `Customer`) powiązani z tożsamością w realmie `store` |
+| Backoffice | działa | Administratorzy (agregat `AdminUser`) powiązani z tożsamością w realmie `admin`; lokalna blokada |
+| Shared | działa | Wspólne obiekty wartości (`Money`, `VatRate`, `LinePrice`, `ExternalIdentity`), infrastruktura bezpieczeństwa |
 | Cart | planowany | Koszyk gościa i klienta |
 | Ordering | planowany | Składanie i cykl życia zamówienia |
 | Payments | planowany | Płatności |
 
+### Keycloak (tożsamość)
+
+- Jedna instancja Keycloak 26.8.0 (w Compose dev), dwa realmy: `store` (klienci sklepu) i `admin` (administratorzy; MFA).
+- Issuer publiczny w dev: `http://localhost:${KEYCLOAK_PORT:-8180}/realms/<realm>`. Discovery i JWKS backend i sklep pobierają przez sieć wewnętrzną: `http://keycloak:8080/realms/<realm>/` (`KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`), a nie przez adres publiczny.
+- Klienci: `store-bff` (poufny, Authorization Code + PKCE S256), `admin-bff` (zarezerwowany pod przyszły BFF admina), `store-api` i `admin-api` (występują jako audience tokenów, przez audience mapper). Rola klienta `admin` na `admin-api` odpowiada `ROLE_ADMIN` w backendzie.
+
 ### Store jako BFF
 
-Kod: `apps/store/src/auth`, zasady w [`apps/store/AGENTS.md`](../apps/store/AGENTS.md). Compose dev uruchamia Keycloak (realm `store`, klient `store-bff`) i `redis-session` oraz przekazuje usłudze `store` zmienne auth (issuer `http://localhost:${KEYCLOAK_PORT}/realms/store`, wewnętrznie `http://keycloak:8080/realms/store`, Redis jako użytkownik ACL `store`); sklep startuje w dev w trybie `oidc`. Profil na stronie `/konto` wymaga `GET /me` backendu (część „Planowane”). Topologia prod (`compose.prod.yaml`, `check-prod-stack.sh`) nie ma jeszcze Keycloaka, `redis-session` ani zmiennych auth sklepu (część „Planowane”).
+Kod: `apps/store/src/auth`, zasady w [`apps/store/AGENTS.md`](../apps/store/AGENTS.md). Compose dev uruchamia Keycloak (realm `store`, klient `store-bff`) i `redis-session` oraz przekazuje usłudze `store` zmienne auth (issuer `http://localhost:${KEYCLOAK_PORT}/realms/store`, wewnętrznie `http://keycloak:8080/realms/store`, Redis jako użytkownik ACL `store`); sklep startuje w dev w trybie `oidc`. Topologia prod (`compose.prod.yaml`, `check-prod-stack.sh`) nie ma jeszcze Keycloaka, `redis-session` ani zmiennych auth sklepu (część „Planowane”).
 
 - Next.js jest poufnym klientem `store-bff` (realm `store`): Authorization Code + PKCE S256, `state`, `nonce` i parametr `iss` (RFC 9207) wymagane. Tokeny wyłącznie po stronie serwera; w przeglądarce tylko nieprzezroczysty identyfikator sesji w ciasteczku `__Host-store_session` (`HttpOnly`, `Secure`, `SameSite=Lax`).
 - Konfiguracja w runtime: `STORE_AUTH_MODE` (`oidc` domyślnie; `disabled` tylko z `STORE_ENVIRONMENT=development` albo `test`), `STORE_PUBLIC_URL`, `STORE_OIDC_ISSUER` (issuer publiczny), opcjonalnie `STORE_OIDC_INTERNAL_URL` (ten sam issuer w sieci wewnętrznej, ze ścieżką realmu, np. `http://keycloak:8080/realms/store`; przez niego idą discovery, token endpoint i JWKS), `STORE_OIDC_CLIENT_ID`, `STORE_OIDC_CLIENT_SECRET`, `STORE_REDIS_URL`, `STORE_SESSION_ENC_KEYS`. Bez kompletnej konfiguracji w trybie `oidc` serwer sklepu nie startuje.
@@ -46,14 +56,31 @@ Kod: `apps/store/src/auth`, zasady w [`apps/store/AGENTS.md`](../apps/store/AGEN
 - Ochrona CSRF: każde żądanie zmieniające stan (Server Actions, także formularz bez JavaScriptu) musi mieć `Origin` równy `STORE_PUBLIC_URL` (bez `Origin` tylko z `Sec-Fetch-Site: same-origin`); inaczej proxy Next.js (`src/proxy.ts`) odpowiada 403, zanim żądanie dotrze do akcji.
 - Wylogowanie: RP-initiated (`end_session` z `id_token_hint`) oraz back-channel (`POST /auth/backchannel-logout`, wołany przez Keycloak w sieci wewnętrznej); oba unieważniają sesję we wszystkich replikach.
 - Katalog nie zależy od Redisa ani Keycloaka: przy ich awarii strony katalogu działają, a trasy logowania odpowiadają 503.
-- Profil klienta: `GET /me` backendu z tokenem Bearer; autoryzacja zostaje na backendzie.
+- Profil klienta (`/konto`): `GET /me` backendu (server-to-server, `STORE_BACKEND_URL`) z access tokenem sesji jako Bearer (realm `store`, audience `store-api`); odpowiedź `{id, email | null, emailVerified}` jest mapowana pole po polu. 401 → jeden wymuszony refresh i ponowienie; drugi 401 usuwa sesję i kończy się stroną błędu (`SessionRejectedError`), bez przekierowania na logowanie. 403 i inne błędy → strona błędu. Autoryzacja zostaje na backendzie.
 
 ### Bezpieczeństwo
 
-- Katalog (`/catalog/...`) jest publiczny i tylko do odczytu, bez logowania.
-- Logowanie klienta sklepu: BFF opisany wyżej; tokeny nigdy nie trafiają do przeglądarki.
-- API administracyjne (`/admin/...`) chroni tymczasowy token Bearer z sekretu `ADMIN_API_TOKEN` ([ADR-0005](adr/0005-catalog-inventory-and-admin-api-access.md), pkt 6). Używany wyłącznie w testach i wywołaniach serwerowych, nigdy w przeglądarce.
-- Autoryzacja jest zawsze egzekwowana na backendzie.
+Backend jest bezstanowy: przy każdym żądaniu sam waliduje token dostępu OIDC (JWT) z Keycloaka, bez sesji i ciasteczek ([ADR-0005](adr/0005-catalog-inventory-and-admin-api-access.md), pkt 6). Autoryzacja jest zawsze egzekwowana na backendzie.
+
+| Ścieżki | Firewall | Wymagania |
+|---|---|---|
+| `/catalog/...`, `/health` | `public` | Bez uwierzytelniania; przesłany token jest ignorowany. Katalog tylko do odczytu. |
+| `/admin/...` | `admin_api` | Token realmu `admin`, audience `admin-api`; `ROLE_ADMIN` wyłącznie z roli klienta `admin` na `admin-api` (`resource_access.admin-api.roles`) |
+| każda inna, np. `/me` | `store_api` | Token realmu `store`, audience `store-api` (`ROLE_CUSTOMER`); nowa trasa jest domyślnie chroniona |
+
+- Walidacja: podpis RS256 kluczami z JWKS realmu (discovery pod adresem wewnętrznym `OIDC_*_DISCOVERY_URL`), dokładny `iss` (`OIDC_*_ISSUER`), `aud` (`OIDC_*_AUDIENCE`), `exp`, `nbf`, `iat`, `sub`, a także `typ: Bearer` i `azp` z listy `OIDC_*_CLIENTS` (`store-bff`, `admin-bff`). Używane claimy: `sub`, `email`, `email_verified`, `typ`, `azp`, `resource_access.admin-api.roles`.
+- Klucze są w cache `cache.oidc` (czas życia z `max-age` JWKS); niedostępny Keycloak oznacza 401 w ciągu 3 s, nigdy 500.
+- Błędy to `application/problem+json`: 401 z `WWW-Authenticate: Bearer` (brak tokenu) albo `Bearer error="invalid_token"`, 403 z `Bearer error="insufficient_scope"`.
+- Endpointy tożsamości:
+
+| Endpoint | Odpowiedź |
+|---|---|
+| `GET /me` | `{id, email \| null, emailVerified}` |
+| `GET /admin/me` | `{id, email \| null, roles}` |
+
+- Powiązanie z tożsamością zewnętrzną to para (issuer, `sub`), unikalna w `Customers` i `Backoffice`; rekord powstaje przy pierwszym żądaniu (just-in-time), e-mail jest synchronizowany z tokenu. Backend nie przechowuje haseł ani ról: role pochodzą z tokenu, `AdminUser` ma tylko lokalną blokadę (403). Ryzyko: zmiana `AUTH_DOMAIN` zmienia `iss`, więc wymaga migracji powiązań (issuer, `sub`).
+- Konfiguracja: zmienne `OIDC_STORE_*` i `OIDC_ADMIN_*` (wartości dev w `apps/backend/.env` i `compose.override.yaml`, w produkcji wymagane przez `compose.prod.yaml`). W dev Keycloak działa w Compose; w topologii prod jeszcze nie (część „Planowane”).
+- Logowanie klienta sklepu: BFF opisany w „Store jako BFF”; tokeny nigdy nie trafiają do przeglądarki.
 
 ## Planowane (zatwierdzone, w realizacji)
 
@@ -81,43 +108,11 @@ Przeglądarka
                                                  PostgreSQL
 ```
 
-Tokeny dokleja po stronie serwera BFF sklepu oraz oauth2-proxy / admin-bff; SPA admina i przeglądarka ich nie widzą. Backend nie trzyma sesji: przy każdym żądaniu waliduje JWT.
+Tokeny dokleja po stronie serwera BFF sklepu oraz oauth2-proxy / admin-bff; SPA admina i przeglądarka ich nie widzą. Walidację tokenów w backendzie opisuje część „Stan aktualny”.
 
-### Keycloak (tożsamość)
+### Tożsamość w topologii prod
 
-- Jedna instancja Keycloak 26.8.0, dwa realmy: `store` (klienci sklepu) i `admin` (administratorzy; MFA).
-- Issuer publiczny: dev `http://localhost:8180/realms/<realm>`, prod `https://${AUTH_DOMAIN}/realms/<realm>`. Na `AUTH_DOMAIN` będą publiczne endpointy obu realmów (`/realms/store/...`, `/realms/admin/...`, m.in. przekierowanie z `store-bff` na `/realms/store/protocol/openid-connect/auth`); konsola administracyjna Keycloak (`/admin/...`) nie będzie publiczna.
-- Discovery i JWKS pobierane przez sieć wewnętrzną: `http://keycloak:8080/realms/<realm>/` (`KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`), a nie przez adres publiczny.
-- Klienci: `store-bff` (poufny, Authorization Code + PKCE S256), `admin-bff` (zarezerwowany pod przyszły BFF admina), `store-api` i `admin-api` (występują jako audience tokenów, przez audience mapper). Rola klienta `admin` na `admin-api` odpowiada `ROLE_ADMIN` w backendzie.
-
-### Backend: walidacja JWT
-
-Backend pozostaje bezstanowy i sam waliduje każdy token Bearer:
-
-- podpis przez klucze z JWKS pobieranego z sieci wewnętrznej,
-- `iss` zgodny z issuerem realmu, `aud` zawiera właściwe API (`store-api` lub `admin-api`), `exp` ważny,
-- `typ` (token dostępowy), `azp` (klient `store-bff` lub `admin-bff`),
-- role z `resource_access.admin-api.roles` dla API administracyjnego.
-
-Używane claimy: `sub`, `email`, `email_verified`, `typ`, `azp`, `resource_access.admin-api.roles`.
-
-Nowe endpointy:
-
-| Endpoint | Odpowiedź |
-|---|---|
-| `GET /me` | `{id, email \| null, emailVerified}` |
-| `GET /admin/me` | `{id, email \| null, roles}` |
-
-Błędy to `application/problem+json`: 401 z `WWW-Authenticate: Bearer error="invalid_token"`, 403 z `WWW-Authenticate: Bearer error="insufficient_scope"`. Tymczasowy `ADMIN_API_TOKEN` zostanie zastąpiony tokenami OIDC z realmu `admin`.
-
-### Moduły tożsamości w backendzie
-
-- `Customers` (agregat Customer) i `Backoffice` (agregat AdminUser) będą nowymi modułami backendu.
-- Powiązanie z tożsamością zewnętrzną to para (issuer, `sub`); backend nie przechowuje haseł.
-- Ryzyko: zmiana `AUTH_DOMAIN` zmienia `iss`, więc wymaga migracji powiązań (issuer, `sub`) w `Customers` i `Backoffice`.
-
-### Sesje sklepu w topologii prod
-
+- Keycloak za edge na `AUTH_DOMAIN`, issuer `https://${AUTH_DOMAIN}/realms/<realm>`: publiczne endpointy obu realmów (`/realms/store/...`, `/realms/admin/...`, m.in. przekierowanie z `store-bff` na `/realms/store/protocol/openid-connect/auth`); konsola administracyjna Keycloak (`/admin/...`) niepubliczna.
 - `redis-session` (`redis:8.8.2-alpine`, `noeviction`, AOF, ACL z użytkownikiem `store` ograniczonym do prefiksu `store:`) i Keycloak w `compose.prod.yaml` oraz zmienne auth usługi `store` (issuer `https://${AUTH_DOMAIN}/realms/store`, wewnętrznie `http://keycloak:8080/realms/store`), sprawdzane przez `check-prod-stack.sh`. W dev działa to już (część „Stan aktualny”, „Store jako BFF”).
 
 ### Admin
@@ -126,6 +121,6 @@ Błędy to `application/problem+json`: 401 z `WWW-Authenticate: Bearer error="in
 
 ### Redis, RabbitMQ, Elasticsearch
 
-- Redis sesji (`redis-session`) powstaje teraz, razem z tożsamością.
+- Redis sesji (`redis-session`) działa w Compose dev (część „Stan aktualny”); w prod zob. „Tożsamość w topologii prod”.
 - Redis cache powstanie później jako osobna instancja (inne wymagania niż sesje: eviction zamiast `noeviction`).
 - RabbitMQ i Elasticsearch to opcjonalne profile Compose, bez integracji biznesowej; integrujemy je dopiero przy konkretnym przypadku użycia.

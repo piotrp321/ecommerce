@@ -21,3 +21,29 @@ services:
 
     # add more service definitions when explicit configuration is needed
     # please note that last definitions always *replace* previous ones
+
+    # HTTP client of OIDC discovery (both API firewalls, security.yaml): an
+    # unreachable or slow identity provider means 401 within 3 seconds instead of
+    # holding the request. Discovery makes two sequential requests (discovery
+    # document, then JWKS), so each one gets at most 1.5 s.
+    # Overrides the SecurityBundle's template, which each firewall extends with
+    # its discovery base_uri.
+    app.oidc_discovery.http_client:
+        class: Symfony\Contracts\HttpClient\HttpClientInterface
+        factory: ['@http_client', 'withOptions']
+        arguments: [{ timeout: 1, max_duration: 1.5 }]
+    security.access_token_handler.oidc_discovery.http_client:
+        class: Symfony\Contracts\HttpClient\HttpClientInterface
+        abstract: true
+        factory: ['@app.oidc_discovery.http_client', 'withOptions']
+        arguments: [!abstract 'http client options']
+
+when@test:
+    services:
+        # Identity provider of the tests (discovery and keys), see config/packages/framework.yaml.
+        App\Tests\Support\Security\FakeOidcProvider: ~
+        # The tests reject many tokens on purpose and every rejection is logged as
+        # an error: the console shows only critical entries (e.g. uncaught exceptions).
+        logger:
+            class: Symfony\Component\HttpKernel\Log\Logger
+            arguments: [critical]
