@@ -13,6 +13,12 @@ for i = 3, #ARGV, 2 do redis.call('HSET', KEYS[1], ARGV[i], ARGV[i + 1]) end
 redis.call('HINCRBY', KEYS[1], 'rtv', 1)
 return 1`;
 
+// KEYS[1] session, KEYS[2] lock; ARGV[1] expected rtv, ARGV[2] lock token.
+const CAS_DELETE_SESSION = `
+if redis.call('HGET', KEYS[1], 'rtv') ~= ARGV[1] then return 0 end
+if redis.call('GET', KEYS[2]) ~= ARGV[2] then return 0 end
+return redis.call('DEL', KEYS[1])`;
+
 const RELEASE_LOCK = `
 if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
 return 0`;
@@ -123,6 +129,8 @@ export function createNodeRedisCommands(url: string): RedisCommands {
             arguments: [expectedRtv, lockToken, ...Object.entries(fields).flat()],
           })) === 1,
       ),
+    casDeleteSession: (sessionKey, lockKey, expectedRtv, lockToken) =>
+      run(async (redis) => (await redis.eval(CAS_DELETE_SESSION, { keys: [sessionKey, lockKey], arguments: [expectedRtv, lockToken] })) === 1),
     releaseLock: (lockKey, token) =>
       run(async (redis) => {
         await redis.eval(RELEASE_LOCK, { keys: [lockKey], arguments: [token] });

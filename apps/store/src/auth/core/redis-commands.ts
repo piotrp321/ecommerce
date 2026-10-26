@@ -27,6 +27,11 @@ export interface RedisCommands {
    * only if the session still has `expectedRtv` and the lock still holds `lockToken`.
    */
   casSession(sessionKey: string, lockKey: string, expectedRtv: string, lockToken: string, fields: Record<string, string>): Promise<boolean>;
+  /**
+   * Compare-and-delete of a session (Lua): deletes it only if it still has `expectedRtv` and
+   * the lock still holds `lockToken`; true when deleted.
+   */
+  casDeleteSession(sessionKey: string, lockKey: string, expectedRtv: string, lockToken: string): Promise<boolean>;
   /** Compare-and-delete (Lua): deletes the lock only if it still holds `token`. */
   releaseLock(lockKey: string, token: string): Promise<void>;
 }

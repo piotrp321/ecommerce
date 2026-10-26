@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { createTokenCipher, parseEncryptionKeys } from '@/auth/core/cipher';
+import { AuthUnavailableError, SessionKeyUnavailableError } from '@/auth/core/errors';
 import { keys, sessionHash } from '@/auth/core/keys';
 import { createMemoryRedis } from '@/auth/core/memory-redis';
 import { createSessionStore } from '@/auth/core/session-store';
@@ -69,7 +70,44 @@ describe('tokens in the session store', () => {
     const after = createSessionStore(redis, createTokenCipher(newKey === undefined || oldKey === undefined ? [] : [newKey, oldKey]));
     expect((await after.readSession('h1'))?.tokens).toEqual({ accessToken: 'A', refreshToken: 'R', idToken: 'I' });
     const withoutOld = createSessionStore(redis, createTokenCipher(newKey === undefined ? [] : [newKey]));
-    expect(await withoutOld.readSession('h1')).toBeNull();
+    await expect(withoutOld.readSession('h1')).rejects.toBeInstanceOf(SessionKeyUnavailableError);
+    expect(await redis.hGetAll(keys.session('h1'))).toMatchObject({ v: '1', sub: 's' });
+  });
+});
+
+describe('key rotation across replicas', () => {
+  const k1 = `k1:${Buffer.alloc(32, 1).toString('base64')}`;
+  const k2 = `k2:${Buffer.alloc(32, 2).toString('base64')}`;
+
+  it('a replica without the new key keeps a session written with it (503), others read it', async () => {
+    const harness = await createHarness({ STORE_SESSION_ENC_KEYS: `${k2},${k1}` });
+    const old = harness.replica({ STORE_SESSION_ENC_KEYS: k1 });
+    const { sessionId } = await signIn(harness);
+
+    await expect(old.manager.getSession(sessionId)).rejects.toBeInstanceOf(AuthUnavailableError);
+    expect(await harness.auth.manager.getSession(sessionId)).toEqual({ userId: 'user-1' });
+  });
+
+  it('phase 1 (new key second everywhere) and phase 2 (new key first) never lose a session', async () => {
+    const harness = await createHarness({ STORE_SESSION_ENC_KEYS: k1 });
+    const { sessionId } = await signIn(harness);
+    const phase1 = harness.replica({ STORE_SESSION_ENC_KEYS: `${k1},${k2}` });
+    const phase2 = harness.replica({ STORE_SESSION_ENC_KEYS: `${k2},${k1}` });
+    harness.clock.now += 290_000; // refresh: phase 2 re-encrypts with k2
+
+    expect(await phase2.manager.getAccessToken(sessionId)).toBe('at-2');
+    expect(await phase1.manager.getAccessToken(sessionId)).toBe('at-2');
+  });
+
+  it('logout on a replica without the key still removes the session (end_session by client_id)', async () => {
+    const harness = await createHarness({ STORE_SESSION_ENC_KEYS: `${k2},${k1}` });
+    const old = harness.replica({ STORE_SESSION_ENC_KEYS: k1 });
+    const { sessionId } = await signIn(harness);
+
+    const url = await old.manager.logout(sessionId);
+
+    expect(url.searchParams.get('client_id')).toBe('store-bff');
+    expect(await harness.auth.manager.getSession(sessionId)).toBeNull();
   });
 });
 

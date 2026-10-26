@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { keys, sessionHash } from '@/auth/core/keys';
-import { AuthUnavailableError } from '@/auth/core/errors';
+import { AuthUnavailableError, SessionRejectedError } from '@/auth/core/errors';
 import { createHarness, signIn } from '@/test/auth-harness';
 import type { Harness } from '@/test/auth-harness';
 
@@ -74,6 +74,25 @@ describe('getAccessToken', () => {
     expect(await harness.auth.manager.getAccessToken(sessionId)).toBeNull();
     expect(await harness.auth.manager.getSession(sessionId)).toBeNull();
     expect(harness.redis.dump().map((entry) => entry.key)).toEqual([]);
+  });
+
+  it('on invalid_grant keeps the session when another refresh won meanwhile (lock lost, rtv changed)', async () => {
+    const harness = await createHarness();
+    const { sessionId } = await signIn(harness);
+    const hash = sessionHash(sessionId);
+    nearExpiry(harness);
+    harness.issuer.refreshMode = 'invalid_grant';
+    harness.issuer.tokenDelayMs = 50;
+
+    const pending = harness.auth.manager.getAccessToken(sessionId);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Our lock expired; another replica took it and stored rotated tokens (rtv 0 -> 1).
+    await harness.redis.del([keys.refreshLock(hash)]);
+    await harness.redis.setNx(keys.refreshLock(hash), 'other-replica', 10_000);
+    await harness.redis.casSession(keys.session(hash), keys.refreshLock(hash), '0', 'other-replica', {});
+
+    expect(await pending).toBe('at-1');
+    expect(await harness.auth.manager.getSession(sessionId)).toEqual({ userId: 'user-1' });
   });
 
   it.each(['network', 'server_error'] as const)('on a %s error keeps the session and fails as unavailable (503)', async (mode) => {
@@ -167,13 +186,13 @@ describe('withAccessToken (backend call with a 401)', () => {
     expect(refreshRequests(harness)).toHaveLength(1);
   });
 
-  it('ends the session after a second 401', async () => {
+  it('ends the session after a second 401 and fails instead of returning "no session" (no login redirect loop)', async () => {
     const harness = await createHarness();
     const { sessionId } = await signIn(harness);
 
-    const result = await harness.auth.manager.withAccessToken(sessionId, () => Promise.resolve({ status: 'unauthorized' as const }));
-
-    expect(result).toBeNull();
+    await expect(harness.auth.manager.withAccessToken(sessionId, () => Promise.resolve({ status: 'unauthorized' as const }))).rejects.toBeInstanceOf(
+      SessionRejectedError,
+    );
     expect(refreshRequests(harness)).toHaveLength(1);
     expect(await harness.auth.manager.getSession(sessionId)).toBeNull();
   });

@@ -1,6 +1,6 @@
 import { calculatePKCECodeChallenge, randomNonce, randomPKCECodeVerifier, randomState } from 'openid-client';
 import { randomUUID } from 'node:crypto';
-import { AuthUnavailableError, LoginFailedError } from './errors';
+import { AuthUnavailableError, LoginFailedError, SessionKeyUnavailableError, SessionRejectedError } from './errors';
 import { newSessionId, sessionHash } from './keys';
 import type { LogoutTokenVerifier } from './logout-token';
 import { InvalidGrantError } from './oidc';
@@ -53,8 +53,9 @@ export interface SessionManager {
   /** A valid access token (refreshed when about to expire), or null without a session. */
   getAccessToken(sessionId: string | undefined): Promise<string | null>;
   /**
-   * Calls the backend with the access token. A 401 although the token looked valid gives one
-   * forced refresh and one retry; a second 401 ends the session (null).
+   * Calls the backend with the access token; null without a session. A 401 although the token
+   * looked valid gives one forced refresh and one retry; a second 401 ends the session and
+   * throws `SessionRejectedError` (an error page, not a redirect to the login).
    */
   withAccessToken<T>(sessionId: string | undefined, call: (accessToken: string) => Promise<TokenResult<T>>): Promise<T | null>;
   /** Ends the session here and returns the RP-initiated logout URL of the provider. */
@@ -129,8 +130,10 @@ export function createSessionManager({
         refreshed = await oidc.refresh(session.tokens.refreshToken);
       } catch (error) {
         if (error instanceof InvalidGrantError) {
-          await store.deleteSession(hash);
-          return null;
+          // Only if no other refresh won meanwhile (its new refresh token is valid).
+          if (await store.deleteRejectedSession(hash, session.kcSid, seenRtv, lockToken)) return null;
+          const current = await store.readSession(hash);
+          return current === null ? null : current.tokens.accessToken;
         }
         throw error;
       }
@@ -235,14 +238,18 @@ export function createSessionManager({
       const retried = await call(second.token);
       if (retried.status === 'ok') return retried.value;
       if (sessionId !== undefined) await store.deleteSession(sessionHash(sessionId));
-      return null;
+      throw new SessionRejectedError();
     },
 
     async logout(sessionId) {
       let idToken: string | null = null;
       if (sessionId !== undefined && sessionId !== '' && sessionId.length <= 128) {
         const hash = sessionHash(sessionId);
-        const session = await store.readSession(hash);
+        // Without the key of its tokens (rotation) the session is still removed, by client_id.
+        const session = await store.readSession(hash).catch((error: unknown) => {
+          if (error instanceof SessionKeyUnavailableError) return null;
+          throw error;
+        });
         idToken = session?.tokens.idToken ?? null;
         await store.deleteSession(hash);
       }
@@ -254,7 +261,13 @@ export function createSessionManager({
     async backchannelLogout(logoutToken) {
       const token = await verifyLogoutToken(logoutToken);
       if (!(await store.markLogoutToken(token.jti, LOGOUT_TOKEN_REPLAY_MS))) throw new ReplayedLogoutTokenError();
-      return { sessions: await store.deleteKeycloakSession(token.sid) };
+      try {
+        return { sessions: await store.deleteKeycloakSession(token.sid) };
+      } catch (error) {
+        // The provider retries a failed delivery: the same token must not count as a replay.
+        await store.unmarkLogoutToken(token.jti).catch(() => undefined);
+        throw error;
+      }
     },
   };
 }

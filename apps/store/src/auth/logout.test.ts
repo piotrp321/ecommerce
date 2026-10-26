@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { createAuth } from '@/auth';
+import { SessionStoreUnavailableError } from '@/auth/core/errors';
 import { handleBackchannelLogout } from '@/auth/handlers';
 import { createHarness, request, signIn } from '@/test/auth-harness';
 import type { EnabledAuth } from '@/test/auth-harness';
@@ -102,6 +103,21 @@ describe('POST /auth/backchannel-logout', () => {
 
     expect(harness.issuer.requests).toContain('http://keycloak:8080/realms/store/protocol/openid-connect/certs');
     expect(harness.issuer.requests.every((url) => url.startsWith('http://keycloak:8080/'))).toBe(true);
+  });
+
+  it('lets Keycloak retry a token whose logout failed (no false replay)', async () => {
+    const harness = await createHarness();
+    const { sessionId } = await signIn(harness, harness.auth, { sid: 'kc-session-1' });
+    const token = await harness.issuer.logoutToken({ sid: 'kc-session-1' });
+    const failing = vi.spyOn(harness.redis, 'sMembers').mockRejectedValueOnce(new SessionStoreUnavailableError());
+
+    expect((await backchannel(harness.auth, token)).status).toBe(503);
+    expect(failing).toHaveBeenCalledTimes(1);
+    expect(await harness.auth.manager.getSession(sessionId)).toEqual({ userId: 'user-1' });
+
+    expect((await backchannel(harness.auth, token)).status).toBe(200);
+    expect(await harness.auth.manager.getSession(sessionId)).toBeNull();
+    expect((await backchannel(harness.auth, token)).status).toBe(400);
   });
 
   it('answers 503 while the session store is down', async () => {

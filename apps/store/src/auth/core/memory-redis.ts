@@ -116,6 +116,12 @@ export function createMemoryRedis(now: () => number = Date.now): MemoryRedis {
         session.set('rtv', String(Number(expectedRtv) + 1));
         return true;
       }),
+    casDeleteSession: (sessionKey, lockKey, expectedRtv, lockToken) =>
+      command(() => {
+        if (hash(sessionKey)?.get('rtv') !== expectedRtv || string(lockKey) !== lockToken) return false;
+        entries.delete(sessionKey);
+        return true;
+      }),
     releaseLock: (lockKey, token) =>
       command(() => {
         if (string(lockKey) === token) entries.delete(lockKey);

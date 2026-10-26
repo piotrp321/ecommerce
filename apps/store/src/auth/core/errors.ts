@@ -18,6 +18,30 @@ export class SessionStoreUnavailableError extends AuthUnavailableError {
 }
 
 /**
+ * A stored token was encrypted with a key (`kid`) this replica does not have, e.g. during a
+ * key rotation. The session is kept (another replica can read it); the request fails as
+ * unavailable instead of signing the user out.
+ */
+export class SessionKeyUnavailableError extends AuthUnavailableError {
+  constructor(options?: ErrorOptions) {
+    super('Session encryption key unavailable in this replica', options);
+    this.name = 'SessionKeyUnavailableError';
+  }
+}
+
+/**
+ * The backend rejected the access token of a session even after a refresh: the session was
+ * removed. Shown as an error page, never as a redirect to the login (with an active SSO
+ * session that would loop: login -> callback -> page -> 401 -> login).
+ */
+export class SessionRejectedError extends Error {
+  constructor() {
+    super('Session rejected by the backend');
+    this.name = 'SessionRejectedError';
+  }
+}
+
+/**
  * The authorization response or the login transaction is not valid (state, iss, nonce, PKCE,
  * an expired or replayed transaction, an error from the authorization server). The user
  * sees a friendly error page and no session is created.

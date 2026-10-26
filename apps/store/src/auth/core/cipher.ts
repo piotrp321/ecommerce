@@ -1,5 +1,13 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 
+/** The value names a key that is not in this ring (rotation in progress), not a modified value. */
+export class UnknownEncryptionKeyError extends Error {
+  constructor() {
+    super('Unknown session encryption key');
+    this.name = 'UnknownEncryptionKeyError';
+  }
+}
+
 /** One key of the ring: `kid` names it in every value it encrypted. */
 export interface EncryptionKey {
   kid: string;
@@ -10,7 +18,7 @@ export interface EncryptionKey {
 export interface TokenCipher {
   /** `aad` binds the value to its place (store key and field), so values cannot be swapped. */
   encrypt(plaintext: string, aad: string): string;
-  /** Throws for an unknown key, a modified value or another `aad`. */
+  /** Throws `UnknownEncryptionKeyError` for a key outside the ring, another error for a modified value or another `aad`. */
   decrypt(value: string, aad: string): string;
 }
 
@@ -38,7 +46,7 @@ export function createTokenCipher(ring: readonly EncryptionKey[]): TokenCipher {
     decrypt(value, aad) {
       const separator = value.indexOf(':');
       const key = separator > 0 ? byKid.get(value.slice(0, separator)) : undefined;
-      if (key === undefined) throw new Error('Unknown session encryption key');
+      if (key === undefined) throw new UnknownEncryptionKeyError();
       const data = Buffer.from(value.slice(separator + 1), 'base64url');
       if (data.length < IV_BYTES + TAG_BYTES) throw new Error('Malformed encrypted value');
       const decipher = createDecipheriv('aes-256-gcm', key, data.subarray(0, IV_BYTES));

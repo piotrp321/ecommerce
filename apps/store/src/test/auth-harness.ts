@@ -13,7 +13,7 @@ export interface Harness {
   redis: MemoryRedis;
   clock: { now: number };
   /** A "replica": its own Auth (own discovery, own in-process state) on the shared Redis. */
-  replica(): EnabledAuth;
+  replica(overrides?: Record<string, string>): EnabledAuth;
   auth: EnabledAuth;
 }
 
@@ -21,8 +21,8 @@ export async function createHarness(env: Record<string, string> = {}): Promise<H
   const issuer = await createFakeIssuer({ internal: (env.STORE_OIDC_INTERNAL_URL ?? 'set') !== '' });
   const clock = { now: Date.now() };
   const redis = createMemoryRedis(() => clock.now);
-  const replica = () => {
-    const auth = createAuth(testAuthEnv(env), { redis, fetch: issuer.fetch, now: () => clock.now });
+  const replica = (overrides: Record<string, string> = {}) => {
+    const auth = createAuth(testAuthEnv({ ...env, ...overrides }), { redis, fetch: issuer.fetch, now: () => clock.now });
     if (!auth.enabled) throw new Error('auth disabled');
     return auth;
   };

@@ -1,4 +1,6 @@
+import { UnknownEncryptionKeyError } from './cipher';
 import type { TokenCipher } from './cipher';
+import { SessionKeyUnavailableError } from './errors';
 import { keys } from './keys';
 import type { RedisCommands } from './redis-commands';
 
@@ -39,7 +41,10 @@ export interface SessionStore {
   /** The transaction once (GETDEL): a replayed callback finds nothing. */
   takeTransaction(state: string): Promise<LoginTransaction | null>;
   createSession(hash: string, session: StoredSession, ttlMs: number): Promise<void>;
-  /** null for a missing session or one that cannot be decrypted (removed). */
+  /**
+   * null for a missing session or a modified one (removed). A token encrypted with a key this
+   * replica does not have throws `SessionKeyUnavailableError` and the session is kept.
+   */
   readSession(hash: string): Promise<StoredSession | null>;
   touchSession(hash: string, lastSeen: number, ttlMs: number): Promise<void>;
   /** Removes the session and its back-channel index entry. */
@@ -48,10 +53,14 @@ export interface SessionStore {
   deleteKeycloakSession(sid: string): Promise<number>;
   acquireRefreshLock(hash: string, token: string, ttlMs: number): Promise<boolean>;
   releaseRefreshLock(hash: string, token: string): Promise<void>;
+  /** Removes a session whose refresh token was rejected, unless another refresh won meanwhile (rtv, lock). */
+  deleteRejectedSession(hash: string, kcSid: string, expectedRtv: number, lockToken: string): Promise<boolean>;
   /** Compare-and-set: false when another refresh won (rtv changed) or the lock was lost. */
   saveRefreshedTokens(hash: string, expectedRtv: number, lockToken: string, tokens: SessionTokens, accessTokenExpiresAt: number): Promise<boolean>;
   /** true the first time a logout token `jti` is seen within `ttlMs`. */
   markLogoutToken(jti: string, ttlMs: number): Promise<boolean>;
+  /** Forgets a `jti` whose logout failed, so the provider can retry it. */
+  unmarkLogoutToken(jti: string): Promise<void>;
 }
 
 const TOKEN_FIELDS = { accessToken: 'at', refreshToken: 'rt', idToken: 'idt' } as const;
@@ -123,8 +132,11 @@ export function createSessionStore(redis: RedisCommands, cipher: TokenCipher): S
           rtv: Number(raw.rtv),
           tokens: { accessToken: decrypt(TOKEN_FIELDS.accessToken), refreshToken: decrypt(TOKEN_FIELDS.refreshToken), idToken: decrypt(TOKEN_FIELDS.idToken) },
         };
-      } catch {
-        // A removed key or a modified value: the session cannot be used any more.
+      } catch (error) {
+        // Another replica may already encrypt with a key this one does not have (rotation):
+        // the session stays for the replicas that can read it.
+        if (error instanceof UnknownEncryptionKeyError) throw new SessionKeyUnavailableError({ cause: error });
+        // A modified value or a value moved to another field: the session cannot be used.
         await deleteSession(hash);
         return null;
       }
@@ -152,6 +164,13 @@ export function createSessionStore(redis: RedisCommands, cipher: TokenCipher): S
       });
     },
 
+    async deleteRejectedSession(hash, kcSid, expectedRtv, lockToken) {
+      const deleted = await redis.casDeleteSession(keys.session(hash), keys.refreshLock(hash), String(expectedRtv), lockToken);
+      if (deleted && kcSid !== '') await redis.sRem(keys.keycloakSession(kcSid), hash);
+      return deleted;
+    },
+
     markLogoutToken: (jti, ttlMs) => redis.setNx(keys.logoutToken(jti), '1', ttlMs),
+    unmarkLogoutToken: (jti) => redis.del([keys.logoutToken(jti)]),
   };
 }

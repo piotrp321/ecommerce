@@ -11,8 +11,9 @@ export const metadata: Metadata = { title: 'Moje konto', robots: { index: false,
 const ACCOUNT_PATH = '/konto';
 
 // Protected page: without a session the user is sent to the login and comes back here.
-// With the session store down this throws (error page, HTTP 500), never a redirect, so
-// there is no redirect loop. Rendered per request for this session only (no cache).
+// With the session store down, or when the backend rejects the session even after a refresh
+// (SessionRejectedError), this throws (error page, HTTP 500), never a redirect: with an
+// active Keycloak session a redirect would loop. Rendered per request (no cache).
 export default async function AccountPage() {
   await requireSession(ACCOUNT_PATH);
   const account = await getAccount();
