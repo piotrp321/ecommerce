@@ -57,7 +57,10 @@ export function createAccountApi({ baseUrl, timeoutMs = 5000, fetch: fetchImpl =
   };
 }
 
-/** The account of the current session, or null when the session ended (also after a rejected token). */
+/**
+ * The account of the current session; null without a session. Throws SessionRejectedError
+ * when the backend still rejects the session after a refresh (the session is removed).
+ */
 export async function getAccount(): Promise<Account | null> {
   const baseUrl = backendBaseUrl(process.env);
   if (baseUrl === null) throw new AccountApiError('STORE_BACKEND_URL is not set');

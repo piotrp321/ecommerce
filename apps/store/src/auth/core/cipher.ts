@@ -23,6 +23,8 @@ export interface TokenCipher {
 }
 
 const IV_BYTES = 12;
+/** Format of a key id (`STORE_SESSION_ENC_KEYS`). */
+const KID = /^[A-Za-z0-9_-]{1,16}$/;
 const TAG_BYTES = 16;
 
 /**
@@ -45,7 +47,10 @@ export function createTokenCipher(ring: readonly EncryptionKey[]): TokenCipher {
     },
     decrypt(value, aad) {
       const separator = value.indexOf(':');
-      const key = separator > 0 ? byKid.get(value.slice(0, separator)) : undefined;
+      const kid = separator > 0 ? value.slice(0, separator) : '';
+      // No prefix or a malformed kid: a corrupted value, not one of a key outside the ring.
+      if (!KID.test(kid)) throw new Error('Malformed encrypted value');
+      const key = byKid.get(kid);
       if (key === undefined) throw new UnknownEncryptionKeyError();
       const data = Buffer.from(value.slice(separator + 1), 'base64url');
       if (data.length < IV_BYTES + TAG_BYTES) throw new Error('Malformed encrypted value');
@@ -71,7 +76,7 @@ export function parseEncryptionKeys(value: string): EncryptionKey[] {
   const ring = entries.map((entry, index) => {
     const separator = entry.indexOf(':');
     const kid = separator > 0 ? entry.slice(0, separator) : '';
-    if (!/^[A-Za-z0-9_-]{1,16}$/.test(kid)) {
+    if (!KID.test(kid)) {
       throw new Error(`STORE_SESSION_ENC_KEYS entry ${String(index + 1)} is not kid:base64 (kid: 1-16 of A-Z a-z 0-9 _ -)`);
     }
     const encoded = entry.slice(separator + 1);

@@ -60,6 +60,22 @@ describe('tokens in the session store', () => {
     expect(await redis.hGetAll(keys.session('h1'))).toEqual({});
   });
 
+  it.each([
+    ['without a kid prefix', 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'],
+    ['with an empty kid', ':AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'],
+    ['with a malformed kid', 'bad kid!:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'],
+    ['empty', ''],
+  ])('treat a value %s as corrupted: the session is removed (not kept as "key unavailable")', async (_, value) => {
+    const redis = createMemoryRedis();
+    const store = createSessionStore(redis, createTokenCipher(parseEncryptionKeys(TEST_ENC_KEYS)));
+    const session = { iss: 'i', sub: 's', kcSid: '', created: 1, lastSeen: 1, absoluteExpiresAt: 2, accessTokenExpiresAt: 2, rtv: 0, tokens: { accessToken: 'A', refreshToken: 'R', idToken: 'I' } };
+    await store.createSession('h1', session, 60_000);
+    await redis.hSetWithTtl(keys.session('h1'), { at: value }, 60_000);
+
+    expect(await store.readSession('h1')).toBeNull();
+    expect(await redis.hGetAll(keys.session('h1'))).toEqual({});
+  });
+
   it('stay readable after a key rotation while the old key is still in the ring', async () => {
     const [newKey, oldKey] = parseEncryptionKeys(TEST_ENC_KEYS);
     const redis = createMemoryRedis();
