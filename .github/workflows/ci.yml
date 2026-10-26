@@ -2,24 +2,31 @@
 # so CI runs exactly what developers run locally (see AGENTS.md).
 name: CI
 
+# Pull requests to main and pushes to main run the quality gates. The production
+# image check is temporarily manual only: run this workflow from the Actions tab
+# or with `gh workflow run ci.yml --ref <branch>` (it then runs that job alone).
 on:
   pull_request:
     branches: [main]
   push:
     branches: [main]
+  workflow_dispatch:
 
 # Read-only token: the workflow only needs to check out the code.
 permissions:
   contents: read
 
-# A newer push to the same PR or branch cancels the run in progress.
+# A newer run of the same event on the same PR or branch cancels the one in
+# progress. The event name keeps a manual production check and the automatic
+# quality gates on main in separate groups, so neither cancels the other.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   quality:
     name: Quality gates (make check)
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -48,8 +55,12 @@ jobs:
         if: always()
         run: make down
 
+  # Manual only for now (workflow_dispatch). Recommended before merging changes that
+  # affect the production images: infra/, compose*.yaml, the Makefile, a Dockerfile
+  # or dependency manifests and lockfiles.
   production-image:
     name: Production image (make check-prod)
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
