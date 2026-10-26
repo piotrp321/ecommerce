@@ -19,8 +19,10 @@ Edukacyjny system e-commerce rozwijany jako monorepo. Projekt służy do nauki A
 | `infra/docker/backend` | Obraz backendu (FrankenPHP): Dockerfile, Caddyfile, PHP ini, entrypoint prod |
 | `infra/docker/admin` | Obraz admina: Vite dev (HMR) i produkcyjny statyczny Caddy |
 | `infra/docker/store` | Obraz sklepu: Next.js dev (HMR) i produkcyjny serwer standalone |
+| `infra/docker/keycloak` | Obraz Keycloaka (dostawca tożsamości): na razie tylko dev (`start-dev`, import realmów) |
+| `infra/keycloak/realms` | Definicje realmów `store` i `admin` (import przy pierwszym starcie, sekrety jako placeholdery `${ENV}`) |
 | `infra/edge` | Edge proxy (Caddy): jedyny publiczny punkt wejścia produkcji, TLS i routing |
-| `infra/scripts` | `check-prod-stack.sh` (cała topologia, z tymczasowym plikiem Compose), `check-prod-admin.sh`, `check-prod-store.sh` |
+| `infra/scripts` | `check-prod-stack.sh` (cała topologia, z tymczasowym plikiem Compose), `check-prod-admin.sh`, `check-prod-store.sh`; dev: `keycloak-db.sh`, `keycloak-dev-seed.sh`, `check-dev-infra.sh` |
 | `docs` | Specyfikacje, roadmapa, ADR |
 | `.claude` | Wspólna konfiguracja Claude Code: skill `/feature-delivery`, subagenci, reguły `ask` (sekcja „Agentic SDLC”) |
 | katalog główny | `compose*.yaml`, `Makefile`, pnpm workspace (`package.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml`), `.node-version`, `AGENTS.md` |
@@ -40,15 +42,17 @@ PHP, Composer, Node.js i pnpm na hoście nie są potrzebne: wszystkie komendy dz
 make bootstrap
 ```
 
-`make bootstrap` buduje obrazy dev, instaluje zależności JS (do wolumenów Dockera), uruchamia PostgreSQL, backend, admina i sklep, instaluje zależności Composera i wykonuje migracje.
+`make bootstrap` buduje obrazy dev, instaluje zależności JS (do wolumenów Dockera), uruchamia PostgreSQL, bazę Keycloaka, backend, admina, sklep, Keycloak i Redis sesji, instaluje zależności Composera i wykonuje migracje.
 
-| Aplikacja | Adres |
+| Usługa | Adres |
 |---|---|
 | Backend | https://localhost (certyfikat generowany lokalnie przez Caddy), stan: https://localhost/health |
 | Admin (Vite, HMR) | http://localhost:5173, API przez proxy: http://localhost:5173/api/health |
 | Sklep (Next.js, SSR, HMR) | http://localhost:3000 |
+| Keycloak (dev) | http://localhost:8180, konsola: http://localhost:8180/admin (`admin` / `dev-only-keycloak-admin-password`) |
+| Redis sesji sklepu | `127.0.0.1:6379` (tylko z hasłem, sekcja „Keycloak i Redis sesji”) |
 
-W dev wszystkie porty (80, 443, 3000, 5173, 5432) są dostępne tylko z `127.0.0.1`. Odpowiedź `/health`:
+W dev wszystkie porty (80, 443, 3000, 5173, 5432, 8180, 6379) są dostępne tylko z `127.0.0.1`. Odpowiedź `/health`:
 
 ```json
 {"status":"ok","database":"ok"}
@@ -93,6 +97,77 @@ curl -k -X PUT "$API/admin/inventory/stock/<id produktu>" -H "Authorization: Bea
 
 Sklep pokaże produkt „Kubek” z ceną brutto 49,20 zł wyliczoną przez backend. Pełny opis operacji jest w [`docs/api/openapi.yaml`](docs/api/openapi.yaml).
 
+### Keycloak i Redis sesji (dev)
+
+Środowisko dev zawiera dostawcę tożsamości i magazyn sesji sklepu. Backend dostaje zmienne `OIDC_STORE_*` i `OIDC_ADMIN_*` (jeszcze nieużywane). Sklep dostaje komplet zmiennych trybu `STORE_AUTH_MODE=oidc` z działającymi wartościami dev: `STORE_ENVIRONMENT`, `STORE_PUBLIC_URL`, `STORE_OIDC_ISSUER` (dokładnie claim `iss`), `STORE_OIDC_INTERNAL_URL` (`http://keycloak:8080/realms/store`), `STORE_OIDC_CLIENT_ID`, `STORE_OIDC_CLIENT_SECRET`, `STORE_REDIS_URL` i `STORE_SESSION_ENC_KEYS` (`kid:base64(32 bajty)`, pierwszy aktywny). Żadna usługa aplikacji nie zależy od Keycloaka ani Redisa (`depends_on`): backend i katalog sklepu działają, gdy oba są zatrzymane. Obie usługi są tylko w `compose.override.yaml`. Topologia prod ich nie zawiera.
+
+**Keycloak 26.8.0** (`infra/docker/keycloak`, `start-dev`) działa na `http://localhost:${KEYCLOAK_PORT:-8180}`. Port zarządzania 9000 (`/health/ready`, healthcheck) nie jest publikowany.
+
+- **Issuer** jest publiczny: `http://localhost:<KEYCLOAK_PORT>/realms/<realm>` (`KC_HOSTNAME`). Usługi w sieci Compose pobierają discovery z `http://keycloak:8080/realms/<realm>/.well-known/openid-configuration` i dostają w nim endpointy back-channel (token, JWKS) pod `http://keycloak:8080` (`KC_HOSTNAME_BACKCHANNEL_DYNAMIC`), z tym samym publicznym issuerem.
+- **Baza:** osobna baza i rola `keycloak` w tym samym PostgreSQL. Tworzy je `infra/scripts/keycloak-db.sh`, uruchamiany przez `make up` po starcie bazy, a przed resztą usług. Skrypt jest idempotentny: tworzy tylko brakujące obiekty, przy każdym uruchomieniu ustawia hasło z `KEYCLOAK_DB_PASSWORD` i odbiera grupie `PUBLIC` prawa `CONNECT` i `TEMPORARY` na bazach `keycloak`, `app` i `postgres`. Rola `keycloak` łączy się więc spośród nich tylko z własną bazą. Superużytkownik aplikacji i `pg_isready` nie są tym ograniczeni. Baza testowa `app_test` zachowuje `CONNECT` dla `PUBLIC`, bo testy backendu łączą się z nią rolami, które same tworzą. Rola `keycloak` nie odczyta tam żadnej tabeli i niczego nie utworzy. Skrypt działa też na istniejącym wolumenie i niczego nie usuwa.
+- **Realmy** (`infra/keycloak/realms/*.json`) są importowane przy starcie (`--import-realm`) tylko wtedy, gdy jeszcze nie istnieją. Zmiana pliku nie zmienia więc istniejącego realmu: obowiązuje w nowym projekcie Compose albo po usunięciu realmu w konsoli. Sekrety i adresy są placeholderami Keycloaka (`${STORE_OIDC_CLIENT_SECRET}`, `${STORE_PUBLIC_URL}` …), które Compose przekazuje do kontenera.
+
+| Realm | Konfiguracja |
+|---|---|
+| `store` | rejestracja, login e-mailem, weryfikacja e-mail, ochrona brute force (czasowa blokada), hasło `length(12)`, `notUsername`, `notEmail`, access token 5 min, sesja SSO 30 min bezczynności / 12 h, rotacja refresh tokenów (bez ponownego użycia), konsola konta wyłączona |
+| `admin` | bez rejestracji i „zapomniałem hasła”, ochrona brute force (czasowa blokada), OTP zawsze wymagane: własny browser flow `admin browser` z OTP Form jako REQUIRED (użytkownik bez OTP musi je skonfigurować przy logowaniu), Configure OTP jako domyślna akcja wymagana, akcja usuwania poświadczeń wyłączona; hasło `length(14)`, sesja SSO 15 min / 8 h, ta sama rotacja refresh tokenów, konsola konta wyłączona |
+
+| Klient | Realm | Konfiguracja |
+|---|---|---|
+| `store-bff` | `store` | poufny, tylko authorization code z PKCE S256, redirect `${STORE_PUBLIC_URL}/auth/callback`, po wylogowaniu `${STORE_PUBLIC_URL}/`, bez web origins, back-channel logout `http://store:3000/auth/backchannel-logout` (z sesją), audience `store-api` |
+| `store-api` | `store` | tylko audience (bez przepływów) |
+| `admin-bff` | `admin` | poufny, tylko authorization code z PKCE S256, redirect `${ADMIN_PUBLIC_URL}/auth/callback`, audience `admin-api`, role w `resource_access.admin-api.roles` |
+| `admin-api` | `admin` | tylko audience, rola klienta `admin` |
+
+`STORE_PUBLIC_URL` i `ADMIN_PUBLIC_URL` mają domyślnie wartości `http://localhost:${STORE_PORT}` i `http://localhost:${ADMIN_PORT}`. Konsolę konta wyłącza zablokowany klient `account`: `/realms/<realm>/account` zwraca 404.
+
+**Redis 8.8.2** (`redis-session`) przechowuje sesje sklepu. AOF jest włączony (`everysec`), bez snapshotów RDB, z limitem `maxmemory 256mb` i polityką `noeviction`, więc przy pełnej pamięci zapis zwraca błąd i żadna sesja nie znika po cichu. Dane leżą w wolumenie `redis_session_data`. Plik ACL powstaje przy starcie z haseł w zmiennych środowiskowych:
+
+- `default`: wyłączony, więc polecenie bez logowania zwraca `NOAUTH`,
+- `store`: tylko klucze `store:*` i polecenia kodu sesji sklepu: `eval`, `evalsha`, `multi`, `exec`, `get`, `getdel`, `set`, `del`, `hset`, `hgetall`, `expire`, `pexpire`, `sadd`, `smembers`, `srem`, `ping` oraz handshake node-redis (`hello`, `auth`, `client setinfo`); `CLIENT LIST`, `ACL`, `CONFIG`, `KEYS` i `FLUSHALL` są zabronione,
+- `ops`: administracja i healthcheck, np. `docker compose exec redis-session sh -c 'REDISCLI_AUTH="$REDIS_OPS_PASSWORD" redis-cli --user ops INFO memory'`.
+
+**Sekrety dev** mają wartości domyślne z prefiksem `dev-only-`, zapisane w `compose.override.yaml`. Można je nadpisać w `.env` lub w środowisku: `KEYCLOAK_DB_PASSWORD`, `KEYCLOAK_ADMIN_PASSWORD`, `STORE_OIDC_CLIENT_SECRET`, `ADMIN_OIDC_CLIENT_SECRET`, `REDIS_SESSION_PASSWORD`, `REDIS_OPS_PASSWORD`, `STORE_SESSION_ENC_KEYS`. Hasła Redisa nie mogą zawierać białych znaków. Hasło użytkownika `store` trafia bez kodowania do `STORE_REDIS_URL`, więc może zawierać tylko znaki bezpieczne w URL (bez `@ : / ? # %`). Nigdy nie używaj tych wartości poza dev.
+
+**E-mail w dev:** środowisko nie ma serwera SMTP. Samodzielna rejestracja w realmie `store` (w Keycloaku 26 formularz bez hasła, potem wymagane VERIFY_EMAIL i UPDATE_PASSWORD) nie wyśle więc maila i nie da się jej dokończyć. Testy ręczne i automatyczne używają użytkowników z `make keycloak-dev-seed`.
+
+#### Keycloak: użytkownicy testowi
+
+```bash
+make keycloak-dev-seed   # po make up; idempotentny (istniejący użytkownik zostaje bez zmian)
+```
+
+Seed tworzy użytkowników tylko w Keycloaku dev. Odmawia działania, gdy Keycloak nie ma hostname `http://localhost:*`. Realmy nie zawierają żadnych użytkowników. Wartości można zmienić zmiennymi środowiskowymi przy wywołaniu `make`:
+
+| Realm | Użytkownik | Hasło | Uwagi |
+|---|---|---|---|
+| `store` | `customer@example.test` (`KEYCLOAK_DEV_CUSTOMER_EMAIL`) | `dev-only-Customer-2026` (`KEYCLOAK_DEV_CUSTOMER_PASSWORD`) | e-mail zweryfikowany |
+| `admin` | `admin` / `admin@example.test` (`KEYCLOAK_DEV_ADMIN_USERNAME`, `KEYCLOAK_DEV_ADMIN_EMAIL`) | `dev-only-Admin-password-2026` (`KEYCLOAK_DEV_ADMIN_PASSWORD`) | rola `admin-api/admin`, TOTP z sekretem `KEYCLOAK_DEV_ADMIN_TOTP_SECRET` |
+
+Logowanie admina wymaga kodu OTP. Keycloak przechowuje surowy sekret (domyślnie `dev-only-admin-totp-secret-000`), a aplikacje uwierzytelniające i `oathtool` używają jego postaci Base32:
+
+```bash
+oathtool --totp -b MRSXMLLPNZWHSLLBMRWWS3RNORXXI4BNONSWG4TFOQWTAMBQ        # domyślny sekret
+oathtool --totp -b "$(printf %s "$KEYCLOAK_DEV_ADMIN_TOTP_SECRET" | base32)"  # własny sekret
+```
+
+Testy automatyczne (E2E, QA) mogą wyliczyć kod tak jak `infra/scripts/check-dev-infra.sh` (funkcja `totp`: HMAC-SHA1 z surowego sekretu, 6 cyfr, okres 30 s), np. w Node: `crypto.createHmac('sha1', secret)`.
+
+#### Kontrola infrastruktury dev
+
+`make stack-check-dev` uruchamia `infra/scripts/check-dev-infra.sh`. Skrypt stawia całą topologię dev we własnym projekcie `ecommerce-dev-check`, przekazywanym jawnie przez `-p`, więc wygrywa z `COMPOSE_PROJECT_NAME` z `.env`. Porty projektu to 28080/28443/25432/25173/23000/28180/26379. Projekt zmienisz zmienną `DEV_CHECK_PROJECT`, a porty zmiennymi `DEV_CHECK_*_PORT`, co pozwala na równoległe sesje. Na końcu skrypt usuwa kontenery i zostawia wolumeny (nigdy `down -v`). Świeży przebieg wymaga więc nowej nazwy projektu, a zmiana portów także, bo realmy importują się raz. Skrypt sam buduje obrazy z bieżącego drzewa roboczego (z cache warstw), więc sprawdza aktualne pliki realmów. Gdy projekt ma już wolumeny, skrypt wypisuje na początku ostrzeżenie `WARN`, bo zmiany w `infra/keycloak/realms/*.json` nie zostaną wtedy sprawdzone. Przy porażce wypisuje logi Keycloaka i Redisa, zanim usunie kontenery. Skrypt sprawdza:
+
+- **usługi:** health Keycloaka i Redisa, `keycloak-db.sh` i `keycloak-dev-seed` uruchomione kilka razy bez błędów, rola `keycloak` bez połączenia z `app` i `postgres` i bez odczytu oraz tworzenia obiektów w `app_test`, `pg_isready` bez zmian,
+- **discovery:** obu realmów z hosta (issuer publiczny) i z sieci Compose (JWKS i token endpoint pod `http://keycloak:8080`),
+- **konfigurację:** realmów i klientów (kcadm, m.in. brute force w obu realmach i OTP Form REQUIRED w realmie admin), odrzucenie password grant, client credentials, żądania bez PKCE, PKCE `plain`, obcego redirect URI i wymiany kodu bez `code_verifier`; klient uwierzytelniany przez `client_secret_basic`,
+- **OTP w realmie admin:** `kc_action=delete_credential` nie usuwa OTP admina, a użytkownik założony przez API bez OTP (z `"requiredActions": []`) musi skonfigurować OTP przy logowaniu i nie dostaje kodu,
+- **sklep:** zmienne trybu `oidc` ustawione i niepuste, issuer i sekret zgodne z Keycloakiem, `STORE_SESSION_ENC_KEYS` w formacie `kid:base64(32 bajty)`, a `STORE_REDIS_URL` loguje się do Redisa jako `store` (wartości nie są wypisywane),
+- **logowanie:** klienta i admina (z kodem TOTP) przez przeglądarkowy flow z PKCE, a w tokenach `iss`, `aud`, `azp`, `typ`, `email_verified`, `resource_access.admin-api.roles` i czas życia 5 min,
+- **Redis:** `NOAUTH` bez hasła, wyłączony `default`, `noeviction`, ACL użytkownika `store` (działają `MULTI`/`EXEC`, `EVAL`, `CLIENT SETINFO`; zabronione `FLUSHALL`, `CONFIG`, `KEYS`, `CLIENT LIST`, `ACL` i klucze spoza `store:*`),
+- **porty:** wyłącznie `127.0.0.1`, port 9000 niepublikowany,
+- **niezależność aplikacji:** backend `/health` i strona sklepu przy zatrzymanym Keycloaku i Redisie, brak `depends_on` na nich,
+- **trwałość:** po `down`/`up` klucz Redisa, realmy i użytkownicy zostają, a dane aplikacji (tabele i liczba wierszy) są nietknięte.
+
 ### Przejście z układu sprzed monorepo
 
 Po aktualizacji z wersji, w której Symfony było w katalogu głównym:
@@ -124,7 +199,9 @@ Inna wersja Node niż w `.node-version` kończy `pnpm install` błędem (`engine
 | Komenda | Opis |
 |---|---|
 | `make bootstrap` | Środowisko dev od zera: build, up, install, migracje |
-| `make build` / `make up` / `make down` | Budowa obrazów dev, start, zatrzymanie (wolumeny zostają) |
+| `make build` / `make up` / `make down` | Budowa obrazów dev, start (najpierw PostgreSQL i `keycloak-db.sh`, potem reszta), zatrzymanie (wolumeny zostają) |
+| `make keycloak-dev-seed` | Użytkownicy testowi w Keycloaku dev (klient sklepu, admin z TOTP), idempotentnie |
+| `make stack-check-dev` | Kontrola infrastruktury dev (Keycloak, Redis, porty) we własnym projekcie `ecommerce-dev-check` |
 | `make install` | Instalacja zależności wszystkich aplikacji (dev; Composer wymaga `make up`) |
 | `make pnpm-install` / `make pnpm c="…"` | Zależności JS do wolumenów Dockera / dowolna komenda pnpm w kontenerze |
 | `make check` | Wszystkie bramki jakości: obowiązkowe przed commitem |
@@ -147,7 +224,7 @@ Inna wersja Node niż w `.node-version` kończy `pnpm install` błędem (`engine
 
 GitHub Actions (`.github/workflows/ci.yml`) działa na runnerze `ubuntu-24.04`, z tokenem tylko do odczytu, i używa tych samych komend co lokalnie:
 
-- **Quality gates** (automatycznie dla każdego Pull Requesta do `main` i po pushu na `main`): `make bootstrap` (dokładnie jak w „Uruchomienie”) i `make check` (lint kontraktu API; backend: composer validate, lint, Deptrac, PHPStan max, PHPUnit z walidacją każdej odpowiedzi API względem kontraktu i zgodnością tras; admin i sklep: ESLint, TypeScript, Vitest, build),
+- **Quality gates** (automatycznie dla każdego Pull Requesta do `main` i po pushu na `main`): `make bootstrap` (dokładnie jak w „Uruchomienie”), `make check` (lint kontraktu API; backend: composer validate, lint, Deptrac, PHPStan max, PHPUnit z walidacją każdej odpowiedzi API względem kontraktu i zgodnością tras; admin i sklep: ESLint, TypeScript, Vitest, build) i `make stack-check-dev` (Keycloak, Redis sesji i porty dev w osobnym projekcie, sekcja „Kontrola infrastruktury dev”),
 - **Production image** (czasowo tylko ręcznie, `workflow_dispatch`): `make check-prod` (obrazy admina i sklepu osobno, potem cała topologia z edge, z jednorazowymi, generowanymi sekretami). Uruchomienie z zakładki Actions albo `gh workflow run ci.yml --ref <gałąź>` wykonuje tylko ten job. Zalecane przed merge zmian wpływających na obrazy produkcyjne: `infra/`, `compose*.yaml`, `Makefile`, Dockerfile, manifesty i lockfile zależności.
 
 Ręczny przebieg i automatyczne Quality gates na `main` są w osobnych grupach `concurrency`, więc nie anulują się nawzajem.
