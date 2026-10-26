@@ -37,12 +37,13 @@ Granice pilnuje Deptrac (`apps/backend/deptrac.yaml`); moduły komunikują się 
 
 ### Store jako BFF
 
-Kod sklepu (`apps/store/src/auth`, zasady w [`apps/store/AGENTS.md`](../apps/store/AGENTS.md)) jest gotowy; do działania potrzebuje Keycloaka, `redis-session` i `GET /me` z części „Planowane”. Compose dev i prod nie uruchamiają jeszcze tych usług ani nie przekazują zmiennych auth do `store`.
+Kod: `apps/store/src/auth`, zasady w [`apps/store/AGENTS.md`](../apps/store/AGENTS.md). Compose dev uruchamia Keycloak (realm `store`, klient `store-bff`) i `redis-session` oraz przekazuje usłudze `store` zmienne auth (issuer `http://localhost:${KEYCLOAK_PORT}/realms/store`, wewnętrznie `http://keycloak:8080/realms/store`, Redis jako użytkownik ACL `store`); sklep startuje w dev w trybie `oidc`. Profil na stronie `/konto` wymaga `GET /me` backendu (część „Planowane”). Topologia prod (`compose.prod.yaml`, `check-prod-stack.sh`) nie ma jeszcze Keycloaka, `redis-session` ani zmiennych auth sklepu (część „Planowane”).
 
 - Next.js jest poufnym klientem `store-bff` (realm `store`): Authorization Code + PKCE S256, `state`, `nonce` i parametr `iss` (RFC 9207) wymagane. Tokeny wyłącznie po stronie serwera; w przeglądarce tylko nieprzezroczysty identyfikator sesji w ciasteczku `__Host-store_session` (`HttpOnly`, `Secure`, `SameSite=Lax`).
 - Konfiguracja w runtime: `STORE_AUTH_MODE` (`oidc` domyślnie; `disabled` tylko z `STORE_ENVIRONMENT=development` albo `test`), `STORE_PUBLIC_URL`, `STORE_OIDC_ISSUER` (issuer publiczny), opcjonalnie `STORE_OIDC_INTERNAL_URL` (ten sam issuer w sieci wewnętrznej, ze ścieżką realmu, np. `http://keycloak:8080/realms/store`; przez niego idą discovery, token endpoint i JWKS), `STORE_OIDC_CLIENT_ID`, `STORE_OIDC_CLIENT_SECRET`, `STORE_REDIS_URL`, `STORE_SESSION_ENC_KEYS`. Bez kompletnej konfiguracji w trybie `oidc` serwer sklepu nie startuje.
 - Sesje w `redis-session` (użytkownik ACL `store`, klucze z prefiksem `store:`, każdy z TTL): klucz rekordu to hash identyfikatora sesji, tokeny szyfrowane AES-256-GCM (pierścień kluczy z `kid`). Sesja wygasa po 30 min bezczynności, najpóźniej po 12 h.
 - Odświeżanie tokenów: jedno wywołanie token endpointu na sesję także przy wielu replikach (lock w Redis i zapis compare-and-set).
+- Ochrona CSRF: każde żądanie zmieniające stan (Server Actions, także formularz bez JavaScriptu) musi mieć `Origin` równy `STORE_PUBLIC_URL` (bez `Origin` tylko z `Sec-Fetch-Site: same-origin`); inaczej proxy Next.js (`src/proxy.ts`) odpowiada 403, zanim żądanie dotrze do akcji.
 - Wylogowanie: RP-initiated (`end_session` z `id_token_hint`) oraz back-channel (`POST /auth/backchannel-logout`, wołany przez Keycloak w sieci wewnętrznej); oba unieważniają sesję we wszystkich replikach.
 - Katalog nie zależy od Redisa ani Keycloaka: przy ich awarii strony katalogu działają, a trasy logowania odpowiadają 503.
 - Profil klienta: `GET /me` backendu z tokenem Bearer; autoryzacja zostaje na backendzie.
@@ -115,9 +116,9 @@ Błędy to `application/problem+json`: 401 z `WWW-Authenticate: Bearer error="in
 - Powiązanie z tożsamością zewnętrzną to para (issuer, `sub`); backend nie przechowuje haseł.
 - Ryzyko: zmiana `AUTH_DOMAIN` zmienia `iss`, więc wymaga migracji powiązań (issuer, `sub`) w `Customers` i `Backoffice`.
 
-### Sesje sklepu w Compose
+### Sesje sklepu w topologii prod
 
-- Osobny Redis `redis-session` (`redis:8.8.2-alpine`, `noeviction`, AOF, ACL z użytkownikiem `store` ograniczonym do prefiksu `store:`) w Compose dev i prod oraz zmienne auth usługi `store` (dev: issuer `http://localhost:8180/realms/store`, prod: `https://${AUTH_DOMAIN}/realms/store`; wewnętrznie `http://keycloak:8080/realms/store`). Kod BFF jest opisany w „Stan aktualny”.
+- `redis-session` (`redis:8.8.2-alpine`, `noeviction`, AOF, ACL z użytkownikiem `store` ograniczonym do prefiksu `store:`) i Keycloak w `compose.prod.yaml` oraz zmienne auth usługi `store` (issuer `https://${AUTH_DOMAIN}/realms/store`, wewnętrznie `http://keycloak:8080/realms/store`), sprawdzane przez `check-prod-stack.sh`. W dev działa to już (część „Stan aktualny”, „Store jako BFF”).
 
 ### Admin
 

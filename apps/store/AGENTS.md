@@ -58,7 +58,7 @@ Sklep jest poufnym klientem OIDC `store-bff` Keycloaka (realm `store`, authoriza
 - Trasy:
   - `GET /logowanie?powrot=`: state, nonce, PKCE; transakcja `store:tx:{state}` na 10 min; ciasteczko logowania; 303 na publiczny authorization endpoint. W UI to zwykły `<a>` (Route Handler, bez prefetchu).
   - `GET /auth/callback`: `state` = ciasteczko logowania, transakcja jednorazowo (`GETDEL`), wymagany parametr `iss` (RFC 9207), nonce i PKCE; URL do walidacji budowany z `STORE_PUBLIC_URL`, nigdy z `Host`. Zawsze nowe id sesji (poprzednia sesja przeglądarki jest usuwana); 303 na `returnTo`. Błąd (także `?error=`) → `/logowanie/blad`.
-  - Wylogowanie: Server Action z `assertSameOrigin()` (`Origin` = `STORE_PUBLIC_URL`; brak `Origin` tylko z `Sec-Fetch-Site: same-origin`), usuwa sesję i indeks, czyści ciasteczko, przekierowuje na `end_session` z `id_token_hint`. Redis niedostępny → fail-open: ciasteczko usunięte, `end_session` z `client_id`.
+  - Wylogowanie: Server Action z `assertSameOrigin()` (`Origin` = `STORE_PUBLIC_URL`; brak `Origin` tylko z `Sec-Fetch-Site: same-origin`; tę samą regułę egzekwuje wcześniej `src/proxy.ts` dla każdego żądania innego niż GET/HEAD/OPTIONS, z czystym 403), usuwa sesję i indeks, czyści ciasteczko, przekierowuje na `end_session` z `id_token_hint`. Redis niedostępny → fail-open: ciasteczko usunięte, `end_session` z `client_id`.
   - `POST /auth/backchannel-logout` (Keycloak woła wewnętrznie): logout token z JWKS (adres wewnętrzny), `iss` publiczny, `aud` = client id, `iat`/`exp`, event back-channel logout, bez `nonce`, wymagany `sid`, replay `jti` odrzucany (gdy usuwanie sesji się nie uda, `jti` jest zapominany, żeby Keycloak mógł ponowić); usuwa wszystkie sesje z `store:kcsid:{sid}`. 200/400/503, `Cache-Control: no-store`.
   - `/konto`: Server Component z `requireSession`, profil z `/me`.
 - `returnTo` (`powrot`): tylko lokalna ścieżka sklepu (`safeReturnTo`), bez `//`, `/\`, schematów, obcego originu, znaków sterujących i tras auth; inaczej `/`.
@@ -68,7 +68,8 @@ Sklep jest poufnym klientem OIDC `store-bff` Keycloaka (realm `store`, authoriza
 - Awarie: Redis niedostępny → katalog i nagłówek działają, `/logowanie`, callback i back-channel 503, `/konto` strona błędu (bez pętli przekierowań), `/healthz` bez zmian. Keycloak niedostępny → trasy auth 503, katalog działa.
 - Nagłówek pokazuje „Zaloguj” albo „Moje konto” wyłącznie po obecności ciasteczka sesji (`hasSessionCookie`): strony katalogu nigdy nie czytają Redisa i nie ustawiają `Set-Cookie`.
 - Logi: tylko klasa i powód błędu; nigdy tokeny, kody, id sesji, sekrety ani `STORE_REDIS_URL`.
-- Plan: Compose dev i prod nie przekazują jeszcze zmiennych auth do usługi `store`, więc kontener sklepu w trybie `oidc` nie wystartuje. Zmienne dev dojdą razem z Keycloakiem i `redis-session` w Compose dev, zmienne prod razem z topologią produkcyjną tożsamości ([architektura](../../docs/architecture.md), „Planowane”). Do lokalnego podglądu bez logowania: `STORE_AUTH_MODE=disabled STORE_ENVIRONMENT=development pnpm dev:store`.
+- Dev: `compose.override.yaml` przekazuje usłudze `store` wszystkie zmienne auth (Keycloak i `redis-session` z Compose dev), więc `make up` uruchamia sklep w trybie `oidc`; użytkowników testowych tworzy `make keycloak-dev-seed`. Lokalnie bez logowania: `STORE_AUTH_MODE=disabled STORE_ENVIRONMENT=development pnpm dev:store`.
+- Plan: topologia prod (`compose.prod.yaml`, `infra/scripts/check-prod-stack.sh`) nie przekazuje jeszcze zmiennych auth do `store` i nie ma Keycloaka ani `redis-session` ([architektura](../../docs/architecture.md), „Planowane”).
 
 ## Bezpieczeństwo
 
@@ -77,7 +78,7 @@ Architektura tożsamości: [docs/architecture.md](../../docs/architecture.md).
 - Autoryzacja zawsze na backendzie, który jest bezstanowy i sam waliduje token (Bearer, audience `store-api`); sklep jej nie duplikuje.
 - Tokeny tylko po stronie serwera Next.js (BFF); w przeglądarce wyłącznie identyfikator sesji w ciasteczku `HttpOnly`, `Secure`, `SameSite=Lax`. Żadnych tokenów w HTML, kodzie klienckim, `localStorage` ani `sessionStorage`; strony dostają tylko `SessionView`.
 - Danych sesji nigdy nie umieszczaj w `use cache`, ISR ani innym współdzielonym cache (pilnuje tego test).
-- Server Actions i formularze zmieniające stan wymagają ochrony CSRF/Origin zgodnej z dokumentacją Next.js oraz `assertSameOrigin()`; nowe trasy auth dodawaj tylko pod `/logowanie` i `/auth/`.
+- Server Actions i formularze zmieniające stan wymagają ochrony CSRF/Origin zgodnej z dokumentacją Next.js oraz `assertSameOrigin()` (w akcji) i `src/proxy.ts` (403 przed akcją; z wyjątkiem `/auth/backchannel-logout`, który uwierzytelnia podpisany logout token); nowe trasy auth dodawaj tylko pod `/logowanie` i `/auth/`.
 
 ## Komendy
 
