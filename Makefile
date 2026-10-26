@@ -2,6 +2,7 @@
 # - aggregate targets without a prefix (bootstrap, up, check, check-prod...),
 # - per-application targets prefixed with the app name (backend-*, admin-*, store-*, edge-*),
 # - the whole production topology prefixed with stack-,
+# - the dev identity provider (Keycloak) prefixed with keycloak-,
 # - the API contract (docs/api/openapi.yaml) prefixed with contract-,
 # - pnpm workspace targets prefixed with pnpm-.
 # None of the targets removes volumes or data.
@@ -22,7 +23,7 @@ PNPM        = $(DOCKER_COMP) run --rm --no-deps admin pnpm
 	backend-test backend-stan backend-arch backend-check backend-build-prod \
 	admin-lint admin-typecheck admin-test admin-build admin-check admin-build-prod admin-check-prod \
 	store-lint store-typecheck store-test store-build store-check store-build-prod store-check-prod \
-	edge-build-prod stack-check-prod contract-lint
+	edge-build-prod stack-check-prod keycloak-dev-seed contract-lint
 
 ## —— Help ———————————————————————————————————————————————————————————————————
 help: ## List available targets
@@ -34,7 +35,9 @@ bootstrap: build pnpm-install up backend-install backend-migrate ## Set up the d
 build: ## Build the dev images
 	@$(DOCKER_COMP) build --pull
 
-up: ## Start the dev containers in detached mode
+up: ## Start the dev containers (PostgreSQL, then the Keycloak database, then all services)
+	@$(DOCKER_COMP) up --detach --wait database
+	@DOCKER_COMP="$(DOCKER_COMP)" ./infra/scripts/keycloak-db.sh
 	@$(DOCKER_COMP) up --detach --wait --remove-orphans
 
 down: ## Stop and remove the dev containers (volumes are kept)
@@ -146,6 +149,10 @@ store-build-prod: ## Build the store production image (standalone Next.js, unpri
 
 store-check-prod: store-build-prod ## Run the store prod image on 127.0.0.1:8082 and check it
 	@./infra/scripts/check-prod-store.sh
+
+## —— Keycloak (identity provider, dev) ——————————————————————————————————————
+keycloak-dev-seed: ## Create the dev-only test users (store customer, admin with TOTP); idempotent, needs `make up`
+	@DOCKER_COMP="$(DOCKER_COMP)" ./infra/scripts/keycloak-dev-seed.sh
 
 ## —— Edge and production topology ———————————————————————————————————————————
 edge-build-prod: ## Build the edge proxy image (Caddy, configuration baked in)
