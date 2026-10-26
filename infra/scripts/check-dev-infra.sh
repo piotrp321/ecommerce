@@ -188,8 +188,9 @@ FROM information_schema.tables WHERE table_schema = 'public' ORDER BY 1;
 SQL
 }
 # Connects as the keycloak role (password from the container environment): as_keycloak <database>
+# as_keycloak <database> [sql] (default SELECT 1)
 as_keycloak() {
-	compose exec -T -e TARGET_DB="$1" database sh -c 'PGPASSWORD="$KEYCLOAK_DB_PASSWORD" psql -X -At -h 127.0.0.1 -U keycloak -d "$TARGET_DB" -c "SELECT 1"' 2>&1 || true
+	compose exec -T -e TARGET_DB="$1" -e SQL="${2:-SELECT 1}" database sh -c 'PGPASSWORD="$KEYCLOAK_DB_PASSWORD" psql -X -At -h 127.0.0.1 -U keycloak -d "$TARGET_DB" -c "$SQL"' 2>&1 || true
 }
 # redis-cli in the redis-session container: redis_as <user|none> <command...>
 redis_as() {
@@ -234,12 +235,14 @@ done
 
 echo "== Keycloak database"
 has "$(as_keycloak keycloak)" "1" && pass "role keycloak connects to its database" || fail "role keycloak cannot connect to database keycloak"
-other_dbs="$(compose exec -T database sh -c 'psql -X -At --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" -c "SELECT datname FROM pg_database WHERE NOT datistemplate AND datname <> '"'"'keycloak'"'"' ORDER BY 1"' | tr '\n' ' ' || true)"
-denied=1
-for db in $other_dbs; do has "$(as_keycloak "$db")" "permission denied for database" || denied=0; done
 app_db="$(container_env database POSTGRES_DB)"
-has " $other_dbs" " ${app_db} " && has " $other_dbs" " ${app_db}_test " && has " $other_dbs" " postgres " && [ "$denied" = 1 ] \
-	&& pass "role keycloak cannot connect to any other database (${other_dbs% })" || fail "role keycloak connects to another database (${other_dbs% })"
+has "$(as_keycloak "$app_db")" "permission denied for database" && has "$(as_keycloak postgres)" "permission denied for database" \
+	&& pass "role keycloak cannot connect to the application database (${app_db}) or postgres" || fail "role keycloak connects to ${app_db} or postgres"
+# The test database keeps CONNECT for PUBLIC (the backend tests connect with their own roles),
+# but the keycloak role reads and creates nothing there.
+has "$(as_keycloak "${app_db}_test" 'SELECT count(*) FROM doctrine_migration_versions')" "permission denied for table" \
+	&& has "$(as_keycloak "${app_db}_test" 'CREATE TABLE public.keycloak_probe (id int)')" "permission denied for schema public" \
+	&& pass "role keycloak cannot read tables or create objects in the test database (${app_db}_test)" || fail "role keycloak has access to ${app_db}_test data"
 has "$(compose exec -T database sh -c 'pg_isready -d "$POSTGRES_DB" -U "$POSTGRES_USER"' 2>&1 || true)" "accepting connections" \
 	&& pass "database health check (pg_isready) unaffected" || fail "pg_isready after the CONNECT revocation"
 super="$(compose exec -T database sh -c 'psql -X -At --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" -c "SELECT rolsuper OR rolcreatedb OR rolcreaterole FROM pg_roles WHERE rolname = '"'"'keycloak'"'"'"' || true)"
