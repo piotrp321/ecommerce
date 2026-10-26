@@ -211,6 +211,12 @@ published_bindings() {
 keycloak_ports_ok() { [ "$(tr -s ' ' <<<"$1" | sed 's/ $//')" = "8080/tcp=127.0.0.1:$2" ]; }
 health() { docker inspect -f '{{.State.Health.Status}}' "$(compose ps -q "$1")" 2>/dev/null || true; }
 backend_health() { curl -sk --max-time 10 "https://localhost:${HTTPS_PORT}/health" || true; }
+# Backend API through its Caddy with a bearer token (through the curl configuration on
+# stdin, never on a command line): backend_api <path> <access token>; body, then the status.
+backend_api() {
+	printf 'header = "Authorization: Bearer %s"\nheader = "Accept: application/json"\n' "$2" \
+		| curl -sk --max-time 10 -K - -w '\n%{http_code}' "https://localhost:${HTTPS_PORT}$1" || true
+}
 store_home_ok() { curl -s --max-time 120 "http://localhost:${STORE_PORT}/" | grep -q '<h1>Sklep</h1>'; }
 
 echo "== Development stack (project ${PROJECT}, Keycloak on ${KEYCLOAK_PORT}, Redis on ${REDIS_PORT})"
@@ -358,6 +364,10 @@ claims="$(jwt_payload "$(json_string access_token "$tokens")")"
 expect_all "store: access token from the internal token endpoint has the public issuer, aud store-api, azp store-bff, typ, e-mail claims" "$claims" \
 	"\"iss\":\"${KC}/realms/store\"" '"azp":"store-bff"' '"typ":"Bearer"' '"email_verified":true' "\"email\":\"${KEYCLOAK_DEV_CUSTOMER_EMAIL}\"" '"sub":"'
 grep -qE '"aud":("store-api"|\[[^]]*"store-api")' <<<"$claims" && pass "store: aud contains store-api" || fail "store: aud without store-api (token error '$(error_of "$tokens")')"
+# The backend accepts the real token (discovery and JWKS inside the network, ADR-0005).
+me="$(backend_api /me "$(json_string access_token "$tokens")")"
+[ "$(tail -n1 <<<"$me")" = "200" ] && has "$me" "\"email\":\"${KEYCLOAK_DEV_CUSTOMER_EMAIL}\"" \
+	&& pass "backend: GET /me with the customer's access token -> 200" || fail "backend: GET /me with the customer's access token -> HTTP $(tail -n1 <<<"$me")"
 exp="$(json_number exp "$claims")" iat="$(json_number iat "$claims")"
 [ -n "$exp" ] && [ -n "$iat" ] && [ $((exp - iat)) -eq 300 ] && pass "store: access token lifetime 300 s" || fail "store: access token lifetime (exp '${exp}', iat '${iat}')"
 challenge="$(printf '%s' "$(openssl rand -hex 32)" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')"
@@ -374,6 +384,9 @@ claims="$(jwt_payload "$(json_string access_token "$tokens")")"
 expect_all "admin: access token has the public issuer, azp admin-bff, resource_access.admin-api.roles [admin]" "$claims" \
 	"\"iss\":\"${KC}/realms/admin\"" '"azp":"admin-bff"' '"typ":"Bearer"' '"resource_access":{"admin-api":{"roles":["admin"]}}' '"sub":"'
 grep -qE '"aud":("admin-api"|\[[^]]*"admin-api")' <<<"$claims" && pass "admin: aud contains admin-api" || fail "admin: aud without admin-api (token error '$(error_of "$tokens")')"
+me="$(backend_api /admin/me "$(json_string access_token "$tokens")")"
+[ "$(tail -n1 <<<"$me")" = "200" ] && has "$me" '"roles":["ROLE_ADMIN"]' \
+	&& pass "backend: GET /admin/me with the admin's access token -> 200 (ROLE_ADMIN)" || fail "backend: GET /admin/me with the admin's access token -> HTTP $(tail -n1 <<<"$me")"
 # The logged-in admin asks to delete the OTP credential (application initiated action);
 # the confirmation is accepted if Keycloak shows it. The credential must stay.
 admin_id="$(json_string id "$(kcadm_get users -r admin -q "username=${KEYCLOAK_DEV_ADMIN_USERNAME}" --fields id)")"
