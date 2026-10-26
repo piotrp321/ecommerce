@@ -13,6 +13,6 @@ final class Database
      */
     public static function reset(Connection $connection): void
     {
-        $connection->executeStatement('TRUNCATE catalog_product, catalog_category, inventory_stock_item');
+        $connection->executeStatement('TRUNCATE catalog_product, catalog_category, inventory_stock_item, customers_customer, backoffice_admin_user');
     }
 }
