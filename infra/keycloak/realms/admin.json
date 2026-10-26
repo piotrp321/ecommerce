@@ -287,6 +287,20 @@
       "publicClient": true,
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false
+    },
+    {
+      "clientId": "admin-cli",
+      "name": "admin-cli",
+      "description": "Built-in client with the password grant disabled: the direct grant flow would issue tokens without OTP to users who have not configured it",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": false,
+      "fullScopeAllowed": false,
+      "protocol": "openid-connect"
     }
   ]
 }
