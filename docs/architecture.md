@@ -29,16 +29,35 @@ Granice pilnuje Deptrac (`apps/backend/deptrac.yaml`); moduły komunikują się 
 |---|---|---|
 | Catalog | działa | Produkty (cena netto, stawka VAT, aktywność) i drzewo kategorii |
 | Inventory | działa | Stan magazynowy |
-| Shared | działa | Wspólne obiekty wartości (`Money`, `VatRate`, `LinePrice`), infrastruktura bezpieczeństwa |
+| Customers | działa | Klienci sklepu (agregat `Customer`) powiązani z tożsamością w realmie `store` |
+| Backoffice | działa | Administratorzy (agregat `AdminUser`) powiązani z tożsamością w realmie `admin`; lokalna blokada |
+| Shared | działa | Wspólne obiekty wartości (`Money`, `VatRate`, `LinePrice`, `ExternalIdentity`), infrastruktura bezpieczeństwa |
 | Cart | planowany | Koszyk gościa i klienta |
 | Ordering | planowany | Składanie i cykl życia zamówienia |
 | Payments | planowany | Płatności |
 
 ### Bezpieczeństwo
 
-- Katalog (`/catalog/...`) jest publiczny i tylko do odczytu, bez logowania.
-- API administracyjne (`/admin/...`) chroni tymczasowy token Bearer z sekretu `ADMIN_API_TOKEN` ([ADR-0005](adr/0005-catalog-inventory-and-admin-api-access.md), pkt 6). Używany wyłącznie w testach i wywołaniach serwerowych, nigdy w przeglądarce.
-- Autoryzacja jest zawsze egzekwowana na backendzie.
+Backend jest bezstanowy: przy każdym żądaniu sam waliduje token dostępu OIDC (JWT) z Keycloaka, bez sesji i ciasteczek ([ADR-0005](adr/0005-catalog-inventory-and-admin-api-access.md), pkt 6). Autoryzacja jest zawsze egzekwowana na backendzie.
+
+| Ścieżki | Firewall | Wymagania |
+|---|---|---|
+| `/catalog/...`, `/health` | `public` | Bez uwierzytelniania; przesłany token jest ignorowany. Katalog tylko do odczytu. |
+| `/admin/...` | `admin_api` | Token realmu `admin`, audience `admin-api`; `ROLE_ADMIN` wyłącznie z roli klienta `admin` na `admin-api` (`resource_access.admin-api.roles`) |
+| każda inna, np. `/me` | `store_api` | Token realmu `store`, audience `store-api` (`ROLE_CUSTOMER`); nowa trasa jest domyślnie chroniona |
+
+- Walidacja: podpis RS256 kluczami z JWKS realmu (discovery pod adresem wewnętrznym `OIDC_*_DISCOVERY_URL`), dokładny `iss` (`OIDC_*_ISSUER`), `aud` (`OIDC_*_AUDIENCE`), `exp`, `nbf`, `iat`, `sub`, a także `typ: Bearer` i `azp` z listy `OIDC_*_CLIENTS` (`store-bff`, `admin-bff`). Używane claimy: `sub`, `email`, `email_verified`, `typ`, `azp`, `resource_access.admin-api.roles`.
+- Klucze są w cache `cache.oidc` (czas życia z `max-age` JWKS); niedostępny Keycloak oznacza 401 w ciągu 3 s, nigdy 500.
+- Błędy to `application/problem+json`: 401 z `WWW-Authenticate: Bearer` (brak tokenu) albo `Bearer error="invalid_token"`, 403 z `Bearer error="insufficient_scope"`.
+- Endpointy tożsamości:
+
+| Endpoint | Odpowiedź |
+|---|---|
+| `GET /me` | `{id, email \| null, emailVerified}` |
+| `GET /admin/me` | `{id, email \| null, roles}` |
+
+- Powiązanie z tożsamością zewnętrzną to para (issuer, `sub`), unikalna w `Customers` i `Backoffice`; rekord powstaje przy pierwszym żądaniu (just-in-time), e-mail jest synchronizowany z tokenu. Backend nie przechowuje haseł ani ról: role pochodzą z tokenu, `AdminUser` ma tylko lokalną blokadę (403). Ryzyko: zmiana `AUTH_DOMAIN` zmienia `iss`, więc wymaga migracji powiązań (issuer, `sub`).
+- Konfiguracja: zmienne `OIDC_STORE_*` i `OIDC_ADMIN_*` (wartości dev w `apps/backend/.env`, w produkcji wymagane przez `compose.prod.yaml`). Keycloak nie działa jeszcze w Compose (część „Planowane”), więc dev odpowiada na chronione API kodem 401.
 
 ## Planowane (zatwierdzone, w realizacji)
 
@@ -66,7 +85,7 @@ Przeglądarka
                                                  PostgreSQL
 ```
 
-Tokeny dokleja po stronie serwera BFF sklepu oraz oauth2-proxy / admin-bff; SPA admina i przeglądarka ich nie widzą. Backend nie trzyma sesji: przy każdym żądaniu waliduje JWT.
+Tokeny dokleja po stronie serwera BFF sklepu oraz oauth2-proxy / admin-bff; SPA admina i przeglądarka ich nie widzą. Walidację tokenów w backendzie opisuje część „Stan aktualny”.
 
 ### Keycloak (tożsamość)
 
@@ -74,32 +93,6 @@ Tokeny dokleja po stronie serwera BFF sklepu oraz oauth2-proxy / admin-bff; SPA 
 - Issuer publiczny: dev `http://localhost:8180/realms/<realm>`, prod `https://${AUTH_DOMAIN}/realms/<realm>`. Na `AUTH_DOMAIN` będą publiczne endpointy obu realmów (`/realms/store/...`, `/realms/admin/...`, m.in. przekierowanie z `store-bff` na `/realms/store/protocol/openid-connect/auth`); konsola administracyjna Keycloak (`/admin/...`) nie będzie publiczna.
 - Discovery i JWKS pobierane przez sieć wewnętrzną: `http://keycloak:8080/realms/<realm>/` (`KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`), a nie przez adres publiczny.
 - Klienci: `store-bff` (poufny, Authorization Code + PKCE S256), `admin-bff` (zarezerwowany pod przyszły BFF admina), `store-api` i `admin-api` (występują jako audience tokenów, przez audience mapper). Rola klienta `admin` na `admin-api` odpowiada `ROLE_ADMIN` w backendzie.
-
-### Backend: walidacja JWT
-
-Backend pozostaje bezstanowy i sam waliduje każdy token Bearer:
-
-- podpis przez klucze z JWKS pobieranego z sieci wewnętrznej,
-- `iss` zgodny z issuerem realmu, `aud` zawiera właściwe API (`store-api` lub `admin-api`), `exp` ważny,
-- `typ` (token dostępowy), `azp` (klient `store-bff` lub `admin-bff`),
-- role z `resource_access.admin-api.roles` dla API administracyjnego.
-
-Używane claimy: `sub`, `email`, `email_verified`, `typ`, `azp`, `resource_access.admin-api.roles`.
-
-Nowe endpointy:
-
-| Endpoint | Odpowiedź |
-|---|---|
-| `GET /me` | `{id, email \| null, emailVerified}` |
-| `GET /admin/me` | `{id, email \| null, roles}` |
-
-Błędy to `application/problem+json`: 401 z `WWW-Authenticate: Bearer error="invalid_token"`, 403 z `WWW-Authenticate: Bearer error="insufficient_scope"`. Tymczasowy `ADMIN_API_TOKEN` zostanie zastąpiony tokenami OIDC z realmu `admin`.
-
-### Moduły tożsamości w backendzie
-
-- `Customers` (agregat Customer) i `Backoffice` (agregat AdminUser) będą nowymi modułami backendu.
-- Powiązanie z tożsamością zewnętrzną to para (issuer, `sub`); backend nie przechowuje haseł.
-- Ryzyko: zmiana `AUTH_DOMAIN` zmienia `iss`, więc wymaga migracji powiązań (issuer, `sub`) w `Customers` i `Backoffice`.
 
 ### Store jako BFF
 

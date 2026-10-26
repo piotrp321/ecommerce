@@ -32,6 +32,18 @@ doctrine:
                 dir: '%kernel.project_dir%/src/Inventory/Infrastructure/Persistence/Doctrine/Mapping'
                 prefix: 'App\Inventory\Domain'
                 alias: Inventory
+            Customers:
+                type: xml
+                is_bundle: false
+                dir: '%kernel.project_dir%/src/Customers/Infrastructure/Persistence/Doctrine/Mapping'
+                prefix: 'App\Customers\Domain'
+                alias: Customers
+            Backoffice:
+                type: xml
+                is_bundle: false
+                dir: '%kernel.project_dir%/src/Backoffice/Infrastructure/Persistence/Doctrine/Mapping'
+                prefix: 'App\Backoffice\Domain'
+                alias: Backoffice
 
 when@test:
     doctrine:

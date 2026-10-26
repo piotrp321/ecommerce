@@ -14,8 +14,9 @@ use Symfony\Component\Security\Http\Authorization\AccessDeniedHandlerInterface;
 use Symfony\Component\Security\Http\EntryPoint\AuthenticationEntryPointInterface;
 
 /**
- * Problem responses of the API firewall: 401 without a valid bearer token
- * (RFC 6750), 403 for an authenticated caller without the required role.
+ * Problem responses of the API firewalls (RFC 6750): 401 without a bearer token
+ * or with an invalid one, 403 for an authenticated caller without the required
+ * role. The details are generic; the cause of a rejection is only logged.
  */
 final class ApiSecurityResponses implements AuthenticationEntryPointInterface, AuthenticationFailureHandlerInterface, AccessDeniedHandlerInterface
 {
@@ -35,6 +36,8 @@ final class ApiSecurityResponses implements AuthenticationEntryPointInterface, A
 
     public function handle(Request $request, AccessDeniedException $accessDeniedException): Response
     {
-        return Problem::response(Response::HTTP_FORBIDDEN, 'Access denied.');
+        return Problem::response(Response::HTTP_FORBIDDEN, 'Access denied.', [
+            'WWW-Authenticate' => 'Bearer error="insufficient_scope"',
+        ]);
     }
 }

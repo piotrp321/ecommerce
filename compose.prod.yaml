@@ -55,6 +55,17 @@ services:
       SERVER_NAME: ":80"
       APP_SECRET: ${APP_SECRET:?APP_SECRET must be set (at least 32 characters)}
       DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      # OpenID Connect access tokens per realm (ADR-0005): the exact "iss" (public
+      # address), the discovery URL inside the network (ending with a slash), the
+      # audience and the allowed clients ("azp", comma-separated).
+      OIDC_STORE_ISSUER: ${OIDC_STORE_ISSUER:?OIDC_STORE_ISSUER must be set (e.g. https://auth.example.com/realms/store)}
+      OIDC_STORE_DISCOVERY_URL: ${OIDC_STORE_DISCOVERY_URL:?OIDC_STORE_DISCOVERY_URL must be set (e.g. http://keycloak:8080/realms/store/)}
+      OIDC_STORE_AUDIENCE: ${OIDC_STORE_AUDIENCE:?OIDC_STORE_AUDIENCE must be set (e.g. store-api)}
+      OIDC_STORE_CLIENTS: ${OIDC_STORE_CLIENTS:?OIDC_STORE_CLIENTS must be set (e.g. store-bff)}
+      OIDC_ADMIN_ISSUER: ${OIDC_ADMIN_ISSUER:?OIDC_ADMIN_ISSUER must be set (e.g. https://auth.example.com/realms/admin)}
+      OIDC_ADMIN_DISCOVERY_URL: ${OIDC_ADMIN_DISCOVERY_URL:?OIDC_ADMIN_DISCOVERY_URL must be set (e.g. http://keycloak:8080/realms/admin/)}
+      OIDC_ADMIN_AUDIENCE: ${OIDC_ADMIN_AUDIENCE:?OIDC_ADMIN_AUDIENCE must be set (e.g. admin-api)}
+      OIDC_ADMIN_CLIENTS: ${OIDC_ADMIN_CLIENTS:?OIDC_ADMIN_CLIENTS must be set (e.g. admin-bff)}
 
   admin:
     image: ${IMAGES_PREFIX:-}ecommerce-admin

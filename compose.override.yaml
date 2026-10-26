@@ -39,13 +39,15 @@ services:
       target: frankenphp_dev
     environment:
       APP_ENV: dev
-      # OpenID Connect resource servers (store-api, admin-api); not used by the code yet.
+      # Access tokens of both realms (ADR-0005): the issuer is the public "iss"; the
+      # discovery URL is the realm's base address inside the network, ending with a
+      # slash (the backend appends .well-known/openid-configuration).
       OIDC_STORE_ISSUER: *store-issuer
-      OIDC_STORE_DISCOVERY_URL: http://keycloak:8080/realms/store/.well-known/openid-configuration
+      OIDC_STORE_DISCOVERY_URL: http://keycloak:8080/realms/store/
       OIDC_STORE_AUDIENCE: store-api
       OIDC_STORE_CLIENTS: store-bff
       OIDC_ADMIN_ISSUER: *admin-issuer
-      OIDC_ADMIN_DISCOVERY_URL: http://keycloak:8080/realms/admin/.well-known/openid-configuration
+      OIDC_ADMIN_DISCOVERY_URL: http://keycloak:8080/realms/admin/
       OIDC_ADMIN_AUDIENCE: admin-api
       OIDC_ADMIN_CLIENTS: admin-bff
     volumes:

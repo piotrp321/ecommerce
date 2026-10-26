@@ -13,3 +13,6 @@ when@test:
         test: true
         session:
             storage_factory_id: session.storage.factory.mock_file
+        # No real HTTP in tests: OIDC discovery is answered by the fake provider.
+        http_client:
+            mock_response_factory: App\Tests\Support\Security\FakeOidcProvider
