@@ -73,12 +73,12 @@ Katalog sklepu pochodzi z publicznego API backendu albo z danych demonstracyjnyc
 
 - **Awaria backendu:** strony sklepu zwracają stronę błędu (HTTP 500), nigdy pustego katalogu ani danych demo. Kontener sklepu zostaje zdrowy, bo `HEALTHCHECK` sprawdza tylko `/healthz` (żywotność procesu Next.js).
 
-Po `make bootstrap` katalog w backendzie jest pusty. Dane dodasz przez administracyjne API z tymczasowym tokenem ([ADR-0005](docs/adr/0005-catalog-inventory-and-admin-api-access.md)):
+Po `make bootstrap` katalog w backendzie jest pusty. Dane dodasz przez administracyjne API z tokenem dostępu administratora: token realmu `admin` z Keycloaka, wydany klientowi `admin-bff`, z rolą klienta `admin` na `admin-api` ([ADR-0005](docs/adr/0005-catalog-inventory-and-admin-api-access.md)). Backend sprawdza go bez sesji; adresy realmów ustawiają zmienne `OIDC_ADMIN_*` w `apps/backend/.env`.
+
+> **Plan:** Keycloak w środowisku dev i sposób pobrania tokenu opisze osobna zmiana. Do tego czasu backend dev odpowiada na administracyjne API kodem 401.
 
 ```bash
-# Raz: token tylko w apps/backend/.env.local (ignorowany przez git), nigdy w repozytorium.
-echo "ADMIN_API_TOKEN=$(openssl rand -hex 32)" >> apps/backend/.env.local
-TOKEN="$(grep '^ADMIN_API_TOKEN=' apps/backend/.env.local | cut -d= -f2)"
+TOKEN='<token dostępu administratora>'   # nie zapisuj go w repozytorium
 API=https://localhost   # backend dev; -k akceptuje lokalny certyfikat Caddy
 
 curl -k -X POST "$API/admin/catalog/categories" -H "Authorization: Bearer $TOKEN" \

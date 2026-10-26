@@ -21,7 +21,7 @@ Panel administracyjny: React 19 + Vite 8 + TypeScript (SPA). Uzupełnia główny
 - `src/api`: port danych `AdminApi` (ekrany zależą tylko od niego), `ApiError` (RFC 9457) i **tymczasowe** typy (`types.ts`). Są bliskie DTO z kontraktu `docs/api/openapi.yaml`, co jest zaakceptowanym wyjątkiem do czasu SDK. Po wprowadzeniu SDK z OpenAPI (etap 5) zastąp je typami SDK i mapowaniem w adapterze; nie rozbudowuj ich ręcznie.
 - `src/demo`: jedyna obecna implementacja `AdminApi`, dane w pamięci karty (bez sieci i storage). Symuluje odpowiedzi błędów kontraktu tylko po to, by pokazać stany UI; nie jest źródłem reguł biznesowych. Nie liczy VAT: po zmianie ceny brutto jest nieznane (`null`), dopóki nie poda go backend.
 - Tryb demo działa w `pnpm dev:admin` i w buildzie z `VITE_ADMIN_DEMO=true`. Zwykły build produkcyjny nie zawiera danych demo i pokazuje ekran „panel niepołączony z API”.
-- Prawdziwy klient API powstanie razem z logowaniem administratorów (sesja w ciasteczkach HttpOnly, CSRF). Do tego czasu nie podłączaj zapisu do API i nie używaj `ADMIN_API_TOKEN` w przeglądarce.
+- Prawdziwy klient API powstanie razem z logowaniem administratorów (sesja w ciasteczkach HttpOnly, CSRF). Do tego czasu nie podłączaj zapisu do API i nie używaj tokenów dostępu API w przeglądarce.
 - `src/components`: komponenty prezentacyjne i design system (tokeny w `src/styles/tokens.css`); `src/features/*`: strony i formularze; `src/lib`: router na History API, formatowanie kwot (stringi dziesiętne, bez floatów), `useAsync`.
 
 ## Wymagania do integracji z API (bez zmian w backendzie na tym etapie)
