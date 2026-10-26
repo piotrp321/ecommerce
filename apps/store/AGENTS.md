@@ -69,7 +69,7 @@ Sklep jest poufnym klientem OIDC `store-bff` Keycloaka (realm `store`, authoriza
 - Nagłówek pokazuje „Zaloguj” albo „Moje konto” wyłącznie po obecności ciasteczka sesji (`hasSessionCookie`): strony katalogu nigdy nie czytają Redisa i nie ustawiają `Set-Cookie`.
 - Logi: tylko klasa i powód błędu; nigdy tokeny, kody, id sesji, sekrety ani `STORE_REDIS_URL`.
 - Dev: `compose.override.yaml` przekazuje usłudze `store` wszystkie zmienne auth (Keycloak i `redis-session` z Compose dev), więc `make up` uruchamia sklep w trybie `oidc`; użytkowników testowych tworzy `make keycloak-dev-seed`. Lokalnie bez logowania: `STORE_AUTH_MODE=disabled STORE_ENVIRONMENT=development pnpm dev:store`.
-- Plan: topologia prod (`compose.prod.yaml`, `infra/scripts/check-prod-stack.sh`) nie przekazuje jeszcze zmiennych auth do `store` i nie ma Keycloaka ani `redis-session` ([architektura](../../docs/architecture.md), „Planowane”).
+- Prod: `compose.prod.yaml` przekazuje usłudze `store` zmienne auth (issuer `https://${AUTH_DOMAIN}/realms/store`, Keycloak i `redis-session` w topologii; [architektura](../../docs/architecture.md)).
 
 ## Bezpieczeństwo
 
@@ -89,7 +89,7 @@ Lokalnie (macOS): `pnpm --filter store lint|typecheck|test|build`, serwer dev: `
 
 - TypeScript `strict` (z `noUncheckedIndexedAccess`), ESLint `strictTypeChecked` + reguły Next.js (Core Web Vitals), bez wyłączania reguł bez uzasadnienia.
 - Testy przez Vitest i Testing Library: sprawdzaj zachowanie widoczne dla użytkownika. Testy zaczynają od źródła demo (`STORE_BACKEND_URL` czyszczona w `vitest.config.ts`); źródło HTTP testuj z mockiem `fetch`.
-- Testy auth (`// @vitest-environment node`): prawdziwy `openid-client` przeciw fałszywemu Keycloakowi (`src/test/fake-oidc.ts`: discovery, token endpoint z PKCE i rotacją refresh tokenów, JWKS, tokeny podpisane `jose`) i in-memory Redis; „repliki” to kolejne `createAuth` na wspólnym store (`src/test/auth-harness.ts`). `vitest.config.ts` czyści wszystkie zmienne auth. Pełny przepływ z dev Keycloakiem sprawdza `infra/scripts/check-auth-flow.sh` (curl z cookie jar; wymaga `CHECK_AUTH_PASSWORD`). Komponenty asynchroniczne (async Server Components) testuj na poziomie funkcji/danych lub testami E2E, gdy powstaną.
+- Testy auth (`// @vitest-environment node`): prawdziwy `openid-client` przeciw fałszywemu Keycloakowi (`src/test/fake-oidc.ts`: discovery, token endpoint z PKCE i rotacją refresh tokenów, JWKS, tokeny podpisane `jose`) i in-memory Redis; „repliki” to kolejne `createAuth` na wspólnym store (`src/test/auth-harness.ts`). `vitest.config.ts` czyści wszystkie zmienne auth. Pełny przepływ sprawdza `infra/scripts/check-auth-flow.sh` na działającym stosie (curl z cookie jar; wymaga `STORE_URL` i `CHECK_AUTH_PASSWORD`; wariant ciasteczka według schematu `STORE_URL`; krok back-channel logout z `CHECK_AUTH_KEYCLOAK_COMPOSE`): w dev ręcznie (`make up`, `make keycloak-dev-seed`), w topologii prod przez edge w `infra/scripts/check-prod-stack.sh` (`make check-prod`). Komponenty asynchroniczne (async Server Components) testuj na poziomie funkcji/danych lub testami E2E, gdy powstaną.
 - `eslint-config-next` nie jest używany: jego wtyczki React/import/jsx-a11y nie wspierają jeszcze ESLint 10. Dbaj o dostępność ręcznie (semantyczny HTML, role, etykiety).
 
 ## Obraz produkcyjny
