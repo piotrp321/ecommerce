@@ -96,8 +96,83 @@ services:
     volumes:
       - redis_session_data:/data
 
+  # Optional services, prepared for later stages and not used by any application yet.
+  # They belong to profiles, so `docker compose up` and `make up` do not start them;
+  # `make rabbitmq-up` / `make elasticsearch-up` do. No service depends on them
+  # (depends_on). Credentials come from compose.override.yaml (development) and
+  # compose.prod.yaml (production), where the passwords come from the environment only;
+  # the containers refuse to start without them, and only when their profile is active.
+
+  # Message broker (profile "messaging"). The node name derives from the hostname and
+  # the data directory from the node name, so the hostname must stay fixed.
+  rabbitmq:
+    image: rabbitmq:4.3.5-management-alpine
+    profiles: [messaging]
+    hostname: rabbitmq
+    restart: unless-stopped
+    # Refuses to start without credentials: without them the image would create the
+    # well-known default user guest/guest.
+    entrypoint:
+      - sh
+      - -ec
+      - |
+        : "$${RABBITMQ_DEFAULT_USER:?RABBITMQ_DEFAULT_USER must be set}"
+        : "$${RABBITMQ_DEFAULT_PASS:?RABBITMQ_DEFAULT_PASS must be set}"
+        exec docker-entrypoint.sh "$$@"
+      - rabbitmq
+    command: [rabbitmq-server]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 6
+      start_period: 60s
+    mem_limit: 512m
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+
+  # Search engine (profile "search"), single node, security enabled (user "elastic"),
+  # plain HTTP because it is reachable only inside the Compose network and on 127.0.0.1
+  # in development.
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.5.5
+    profiles: [search]
+    restart: unless-stopped
+    # Refuses to start without the password of the "elastic" user (without it the
+    # secured cluster would have no usable superuser).
+    entrypoint:
+      - sh
+      - -ec
+      - |
+        : "$${ELASTIC_PASSWORD:?ELASTIC_PASSWORD must be set}"
+        exec /bin/tini -- /usr/local/bin/docker-entrypoint.sh "$$@"
+      - elasticsearch
+    command: [eswrapper]
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "true"
+      xpack.security.http.ssl.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -s --max-time 5 -u "elastic:$$ELASTIC_PASSWORD" http://localhost:9200/_cluster/health | grep -Eq '"status":"(green|yellow)"'
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 120s
+    mem_limit: 1g
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+
 volumes:
   caddy_data:
   caddy_config:
   database_data:
   redis_session_data:
+  rabbitmq_data:
+  elasticsearch_data:

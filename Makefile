@@ -3,6 +3,7 @@
 # - per-application targets prefixed with the app name (backend-*, admin-*, store-*, edge-*),
 # - the whole topology prefixed with stack- (stack-check-prod, stack-check-dev),
 # - the identity provider (Keycloak) prefixed with keycloak-,
+# - optional services (profiles, not started by `make up`) prefixed with their name (rabbitmq-, elasticsearch-),
 # - the API contract (docs/api/openapi.yaml) prefixed with contract-,
 # - pnpm workspace targets prefixed with pnpm-.
 # None of the targets removes volumes or data.
@@ -23,7 +24,8 @@ PNPM        = $(DOCKER_COMP) run --rm --no-deps admin pnpm
 	backend-test backend-stan backend-arch backend-check backend-build-prod \
 	admin-lint admin-typecheck admin-test admin-build admin-check admin-build-prod admin-check-prod \
 	store-lint store-typecheck store-test store-build store-check store-build-prod store-check-prod \
-	edge-build-prod stack-check-prod stack-check-dev keycloak-dev-seed keycloak-build-prod contract-lint
+	edge-build-prod stack-check-prod stack-check-dev stack-check-dev-optional \
+	rabbitmq-up rabbitmq-down elasticsearch-up elasticsearch-down keycloak-dev-seed keycloak-build-prod contract-lint
 
 ## —— Help ———————————————————————————————————————————————————————————————————
 help: ## List available targets
@@ -35,16 +37,16 @@ bootstrap: build pnpm-install up backend-install backend-migrate ## Set up the d
 build: ## Build the dev images
 	@$(DOCKER_COMP) build --pull
 
-up: ## Start the dev containers (PostgreSQL, then the Keycloak database, then all services)
+up: ## Start the dev containers (PostgreSQL, then the Keycloak database, then all services; not RabbitMQ and Elasticsearch)
 	@$(DOCKER_COMP) up --detach --wait database
 	@DOCKER_COMP="$(DOCKER_COMP)" ./infra/scripts/keycloak-db.sh
 	@$(DOCKER_COMP) up --detach --wait --remove-orphans
 
-down: ## Stop and remove the dev containers (volumes are kept)
-	@$(DOCKER_COMP) down --remove-orphans
+down: ## Stop and remove the dev containers, including the optional services (volumes are kept)
+	@$(DOCKER_COMP) --profile '*' down --remove-orphans
 
-logs: ## Follow the container logs
-	@$(DOCKER_COMP) logs --tail=100 --follow
+logs: ## Follow the container logs (including the optional services, if running)
+	@$(DOCKER_COMP) --profile '*' logs --tail=100 --follow
 
 install: pnpm-install backend-install ## Install the dependencies of all applications (dev; backend needs `make up`)
 
@@ -157,6 +159,19 @@ keycloak-dev-seed: ## Create the dev-only test users (store customer, admin with
 keycloak-build-prod: ## Build the Keycloak production image (optimized build, realms baked in, no secrets)
 	@docker build --pull --file infra/docker/keycloak/Dockerfile --target keycloak_prod --tag $(IMAGES_PREFIX)ecommerce-keycloak .
 
+## —— Optional services (profiles; prepared for later stages, no application uses them yet) ——
+rabbitmq-up: ## Start RabbitMQ (profile messaging; AMQP and management UI on 127.0.0.1) and wait until healthy
+	@$(DOCKER_COMP) up --detach --wait rabbitmq
+
+rabbitmq-down: ## Stop and remove RabbitMQ (the volume is kept)
+	@$(DOCKER_COMP) --profile messaging down rabbitmq
+
+elasticsearch-up: ## Start Elasticsearch (profile search; port on 127.0.0.1) and wait until healthy
+	@$(DOCKER_COMP) up --detach --wait elasticsearch
+
+elasticsearch-down: ## Stop and remove Elasticsearch (the volume is kept)
+	@$(DOCKER_COMP) --profile search down elasticsearch
+
 ## —— Edge, production topology and dev topology check ————————————————————————
 edge-build-prod: ## Build the edge proxy image (Caddy, configuration baked in)
 	@docker build --pull --file infra/edge/Dockerfile --target edge_prod --tag $(IMAGES_PREFIX)ecommerce-edge .
@@ -166,6 +181,9 @@ stack-check-prod: backend-build-prod admin-build-prod store-build-prod edge-buil
 
 stack-check-dev: ## Run the dev topology in its own project (ecommerce-dev-check) and check Keycloak, Redis and exposure
 	@./infra/scripts/check-dev-infra.sh
+
+stack-check-dev-optional: ## Like stack-check-dev, plus RabbitMQ and Elasticsearch (profiles messaging and search, own project, ports 28xxx)
+	@DEV_CHECK_OPTIONAL=1 ./infra/scripts/check-dev-infra.sh
 
 ## —— API contract (docs/api/openapi.yaml) ————————————————————————————————————
 contract-lint: ## Lint the OpenAPI contract (Redocly, recommended-strict, redocly.yaml)
