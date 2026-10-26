@@ -3,13 +3,20 @@
 # project and checks the identity and session infrastructure: Keycloak (realms, clients,
 # discovery, PKCE, logins with the dev seed users, account console), the Keycloak
 # database, Redis for the store sessions (ACL, eviction policy, persistence), port
-# exposure and that the backend and the store work without Keycloak and Redis.
+# exposure and that the backend and the store work without Keycloak and Redis. It also
+# asserts that the default `make up` does not start the optional services (RabbitMQ,
+# Elasticsearch; profiles messaging and search).
+# With DEV_CHECK_OPTIONAL=1 (make stack-check-dev-optional) the optional services are
+# started as well (make rabbitmq-up, make elasticsearch-up) and checked: health,
+# authentication, ports on 127.0.0.1, data surviving down/up (a durable queue with a
+# persistent message, an Elasticsearch document); make down must remove them too.
 #
 # Project: DEV_CHECK_PROJECT (default ecommerce-dev-check), always passed with -p, so it
 # wins over COMPOSE_PROJECT_NAME from .env. Ports (all on 127.0.0.1): DEV_CHECK_HTTP_PORT
 # (28080), DEV_CHECK_HTTPS_PORT (28443), DEV_CHECK_POSTGRES_PORT (25432),
 # DEV_CHECK_ADMIN_PORT (25173), DEV_CHECK_STORE_PORT (23000), DEV_CHECK_KEYCLOAK_PORT
-# (28180), DEV_CHECK_REDIS_PORT (26379). The containers are removed at the end; the
+# (28180), DEV_CHECK_REDIS_PORT (26379), DEV_CHECK_RABBITMQ_PORT (28672),
+# DEV_CHECK_RABBITMQ_MANAGEMENT_PORT (28673), DEV_CHECK_ELASTICSEARCH_PORT (28920). The containers are removed at the end; the
 # volumes are kept (never `down -v`), so a fresh run needs a new project name.
 # Development secrets are read from the containers when needed and never printed.
 set -euo pipefail
@@ -25,6 +32,10 @@ export ADMIN_PORT="${DEV_CHECK_ADMIN_PORT:-25173}"
 export STORE_PORT="${DEV_CHECK_STORE_PORT:-23000}"
 export KEYCLOAK_PORT="${DEV_CHECK_KEYCLOAK_PORT:-28180}"
 export REDIS_PORT="${DEV_CHECK_REDIS_PORT:-26379}"
+export RABBITMQ_PORT="${DEV_CHECK_RABBITMQ_PORT:-28672}"
+export RABBITMQ_MANAGEMENT_PORT="${DEV_CHECK_RABBITMQ_MANAGEMENT_PORT:-28673}"
+export ELASTICSEARCH_PORT="${DEV_CHECK_ELASTICSEARCH_PORT:-28920}"
+OPTIONAL="${DEV_CHECK_OPTIONAL:-0}"
 export STORE_PUBLIC_URL="http://localhost:${STORE_PORT}"
 export ADMIN_PUBLIC_URL="http://localhost:${ADMIN_PORT}"
 # The store pages render the catalog from the backend API (an empty value in .env would
@@ -52,10 +63,10 @@ work="$(mktemp -d)"
 cleanup() {
 	local status=$?
 	if [ "$status" -ne 0 ]; then
-		echo "== Logs (keycloak, redis-session) of the failed check"
-		compose logs --no-color --tail=100 keycloak redis-session 2>&1 || true
+		echo "== Logs (keycloak, redis-session, rabbitmq, elasticsearch) of the failed check"
+		compose --profile '*' logs --no-color --tail=100 keycloak redis-session rabbitmq elasticsearch 2>&1 || true
 	fi
-	compose down --remove-orphans >/dev/null 2>&1 || true
+	compose --profile '*' down --remove-orphans >/dev/null 2>&1 || true
 	rm -rf "$work"
 }
 trap cleanup EXIT
@@ -227,7 +238,29 @@ backend_api() {
 }
 store_home_ok() { curl -s --max-time 120 "http://localhost:${STORE_PORT}/" | grep -q '<h1>Sklep</h1>'; }
 
-echo "== Development stack (project ${PROJECT}, Keycloak on ${KEYCLOAK_PORT}, Redis on ${REDIS_PORT})"
+# --- Helpers: optional services ----------------------------------------------------------
+# HTTP request with Basic authentication (no user: no credentials); the curl configuration
+# goes through stdin, so no password appears on a command line. Prints the body, then the
+# status code on the last line: http_basic <base url> <user> <password> <method> <path> [json body]
+http_basic() {
+	local body="${6:-}"
+	{
+		printf 'url = "%s%s"\nrequest = "%s"\nheader = "content-type: application/json"\nmax-time = 10\nsilent\nwrite-out = "\\n%%{http_code}"\n' "$1" "$5" "$4"
+		[ -z "$2" ] || printf 'user = "%s:%s"\n' "$2" "$3"
+		[ -z "$body" ] || printf 'data = "%s"\n' "${body//\"/\\\"}"
+		true
+	} | curl -K - || true
+}
+status_of() { tail -n1 <<<"$1"; }
+rabbitmq_api() { http_basic "http://localhost:${RABBITMQ_MANAGEMENT_PORT}" "$@"; }
+elasticsearch_api() { http_basic "http://localhost:${ELASTICSEARCH_PORT}" "$@"; }
+sorted_words() { tr ' ' '\n' <<<"$1" | grep . | sort | tr '\n' ' '; }
+# Number of messages in the durable queue dev-check (broker view, not the delayed statistics).
+rabbitmq_queue_messages() {
+	compose exec -T rabbitmq rabbitmqctl -q list_queues name messages durable 2>&1 | tr -s '[:space:]' ' ' | grep -o 'dev-check [0-9]* true' | cut -d' ' -f2 || true
+}
+
+echo "== Development stack (project ${PROJECT}, Keycloak on ${KEYCLOAK_PORT}, Redis on ${REDIS_PORT}$([ "$OPTIONAL" = 1 ] && echo ", RabbitMQ on ${RABBITMQ_PORT}/${RABBITMQ_MANAGEMENT_PORT}, Elasticsearch on ${ELASTICSEARCH_PORT}"))"
 # Realms are imported once: with volumes of an earlier run, Keycloak keeps the realms of that
 # import (changes in infra/keycloak/realms/*.json are not checked) and the database keeps its
 # data. Nothing is removed; a fresh check needs a new DEV_CHECK_PROJECT.
@@ -250,6 +283,8 @@ step "keycloak-db.sh runs again without errors (idempotent)" env DOCKER_COMP="$D
 step "keycloak-dev-seed runs (first run in this project creates or skips the users)" make_dev keycloak-dev-seed
 make_dev keycloak-dev-seed >"$work/seed2.log" 2>&1 && [ "$(grep -c 'already exists (skipped)' "$work/seed2.log")" = "2" ] \
 	&& pass "keycloak-dev-seed runs again: both users skipped (idempotent)" || { fail "second keycloak-dev-seed run"; cat "$work/seed2.log"; }
+[ -z "$(compose --profile '*' ps -aq rabbitmq elasticsearch)" ] \
+	&& pass "make up does not start rabbitmq or elasticsearch (optional profiles)" || fail "rabbitmq or elasticsearch started by the default make up"
 for svc in keycloak redis-session; do
 	[ "$(health "$svc")" = "healthy" ] && pass "${svc} is healthy" || fail "${svc} health: $(health "$svc")"
 done
@@ -494,8 +529,73 @@ has "$(backend_health)" '"status":"ok"' && pass "backend /health 200 with Keyclo
 store_home_ok && pass "store catalog page renders with Keycloak and Redis stopped" || fail "store page with Keycloak and Redis stopped"
 [ "$(health backend)" = "healthy" ] && [ "$(health store)" = "healthy" ] && pass "backend and store containers stay healthy" || fail "backend/store health"
 
+echo "== Optional services: no dependencies on them"
+config="$(compose --profile '*' config --format json | compact)"
+! has "$config" '"rabbitmq":{"condition"' && ! has "$config" '"elasticsearch":{"condition"' \
+	&& pass "no service depends_on rabbitmq or elasticsearch" || fail "a service depends on rabbitmq or elasticsearch"
+
+if [ "$OPTIONAL" = 1 ]; then
+	echo "== Optional services (profiles messaging and search)"
+	step "make rabbitmq-up: RabbitMQ healthy" make_dev rabbitmq-up
+	step "make elasticsearch-up: Elasticsearch healthy" make_dev elasticsearch-up
+	for svc in rabbitmq elasticsearch; do
+		[ "$(health "$svc")" = "healthy" ] && pass "${svc} is healthy" || fail "${svc} health: $(health "$svc")"
+	done
+	# Without credentials the containers refuse to start (one-off containers, no ports, no data).
+	compose run --rm --no-deps -e RABBITMQ_DEFAULT_PASS= rabbitmq >"$work/refuse.log" 2>&1 \
+		&& fail "rabbitmq starts without RABBITMQ_DEFAULT_PASS" || { has "$(cat "$work/refuse.log")" "RABBITMQ_DEFAULT_PASS must be set" && pass "rabbitmq: refuses to start without RABBITMQ_DEFAULT_PASS"; } || fail "rabbitmq: unexpected failure without the password"
+	compose run --rm --no-deps -e ELASTIC_PASSWORD= elasticsearch >"$work/refuse.log" 2>&1 \
+		&& fail "elasticsearch starts without ELASTIC_PASSWORD" || { has "$(cat "$work/refuse.log")" "ELASTIC_PASSWORD must be set" && pass "elasticsearch: refuses to start without ELASTIC_PASSWORD"; } || fail "elasticsearch: unexpected failure without the password"
+	rmq_user="$(container_env rabbitmq RABBITMQ_DEFAULT_USER)"
+	rmq_pass="$(container_env rabbitmq RABBITMQ_DEFAULT_PASS)"
+	es_pass="$(container_env elasticsearch ELASTIC_PASSWORD)"
+
+	echo "-- RabbitMQ"
+	res="$(rabbitmq_api "$rmq_user" "$rmq_pass" GET /api/overview)"
+	[ "$(status_of "$res")" = "200" ] && pass "rabbitmq: management API accepts the configured user" || fail "rabbitmq: management API with the configured user -> $(status_of "$res")"
+	res="$(rabbitmq_api "$rmq_user" "wrong-${rmq_pass}" GET /api/overview)"
+	[ "$(status_of "$res")" = "401" ] && pass "rabbitmq: wrong password rejected (401)" || fail "rabbitmq: wrong password -> $(status_of "$res")"
+	res="$(rabbitmq_api guest guest GET /api/overview)"
+	[ "$(status_of "$res")" = "401" ] && pass "rabbitmq: guest/guest from outside the container rejected (401)" || fail "rabbitmq: guest/guest -> $(status_of "$res")"
+	users="$(compose exec -T rabbitmq rabbitmqctl -q list_users 2>&1 || true)"
+	has "$users" "$rmq_user" && ! grep -qw guest <<<"$users" \
+		&& pass "rabbitmq: the configured user exists, the built-in guest user does not" || fail "rabbitmq users"
+	compose exec -T rabbitmq sh -c 'rabbitmqctl -q authenticate_user "$RABBITMQ_DEFAULT_USER" "wrong-$RABBITMQ_DEFAULT_PASS"' >/dev/null 2>&1 \
+		&& fail "rabbitmq: the broker accepts a wrong password" || pass "rabbitmq: the broker rejects a wrong password"
+	compose exec -T rabbitmq sh -c 'rabbitmqctl -q authenticate_user "$RABBITMQ_DEFAULT_USER" "$RABBITMQ_DEFAULT_PASS"' >/dev/null 2>&1 \
+		&& pass "rabbitmq: the broker accepts the configured password" || fail "rabbitmq: the broker rejects the configured password"
+	res="$(rabbitmq_api "$rmq_user" "$rmq_pass" PUT /api/queues/%2F/dev-check '{"durable":true,"auto_delete":false}')"
+	[ "$(status_of "$res")" = "201" ] && pass "rabbitmq: durable queue dev-check declared" || fail "rabbitmq: declaring the queue -> $(status_of "$res")"
+	res="$(rabbitmq_api "$rmq_user" "$rmq_pass" POST /api/exchanges/%2F/amq.default/publish '{"properties":{"delivery_mode":2},"routing_key":"dev-check","payload":"persist-me","payload_encoding":"string"}')"
+	has "$res" '"routed":true' && pass "rabbitmq: persistent message published and routed to dev-check" || fail "rabbitmq: publishing -> $res"
+	[ "$(rabbitmq_queue_messages)" = "1" ] && pass "rabbitmq: queue dev-check holds 1 message" || fail "rabbitmq: queue contents before the restart: '$(rabbitmq_queue_messages)'"
+
+	echo "-- Elasticsearch"
+	res="$(elasticsearch_api "" "" GET /)"
+	[ "$(status_of "$res")" = "401" ] && pass "elasticsearch: request without credentials rejected (401)" || fail "elasticsearch: no credentials -> $(status_of "$res")"
+	res="$(elasticsearch_api elastic "wrong-${es_pass}" GET /)"
+	[ "$(status_of "$res")" = "401" ] && pass "elasticsearch: wrong password rejected (401)" || fail "elasticsearch: wrong password -> $(status_of "$res")"
+	res="$(elasticsearch_api elastic "$es_pass" GET /_cluster/health)"
+	[ "$(status_of "$res")" = "200" ] && grep -qE '"status":"(green|yellow)"' <<<"$res" \
+		&& pass "elasticsearch: user elastic authenticates, cluster green or yellow" || fail "elasticsearch: cluster health -> $(status_of "$res")"
+	has "$(compact <<<"$(elasticsearch_api elastic "$es_pass" GET /)")" '"number":"9.' && pass "elasticsearch: version 9.x" || fail "elasticsearch: version"
+	es_marker="doc-$(openssl rand -hex 8)"
+	res="$(elasticsearch_api elastic "$es_pass" PUT "/dev-check/_doc/1?refresh=true" "{\"marker\":\"${es_marker}\"}")"
+	grep -qE '"result":"(created|updated)"' <<<"$res" && pass "elasticsearch: document indexed in dev-check" || fail "elasticsearch: indexing -> $res"
+
+	echo "-- Exposure"
+	ports="$(compose ps --format '{{.Service}} {{.Ports}}')"
+	published="$(grep -oE '[][0-9a-f.:]+:[0-9]+->[0-9]+/(tcp|udp)' <<<"$ports" || true)"
+	[ -n "$published" ] && ! grep -vqE '^127\.0\.0\.1:' <<<"$published" && pass "all published ports (with the optional services) bound to 127.0.0.1 only" || fail "ports: ${published}"
+	[ "$(sorted_words "$(published_bindings rabbitmq)")" = "$(sorted_words "5672/tcp=127.0.0.1:${RABBITMQ_PORT} 15672/tcp=127.0.0.1:${RABBITMQ_MANAGEMENT_PORT}")" ] \
+		&& pass "rabbitmq publishes only 5672 and 15672, on 127.0.0.1" || fail "rabbitmq ports: '$(published_bindings rabbitmq)'"
+	[ "$(sorted_words "$(published_bindings elasticsearch)")" = "$(sorted_words "9200/tcp=127.0.0.1:${ELASTICSEARCH_PORT}")" ] \
+		&& pass "elasticsearch publishes only 9200, on 127.0.0.1" || fail "elasticsearch ports: '$(published_bindings elasticsearch)'"
+fi
+
 echo "== Restart: containers removed and recreated (volumes kept)"
-compose down --remove-orphans >/dev/null 2>&1 && pass "compose down (without -v)" || fail "compose down"
+make_dev down >/dev/null 2>&1 && pass "make down (without -v)" || fail "make down"
+[ -z "$(compose --profile '*' ps -aq)" ] && pass "make down removed all containers, including the optional services" || fail "containers left after make down"
 step "make up again on the existing volumes (keycloak-db.sh third run)" make_dev up
 [ "$(redis_as store GET store:dev-check:persist)" = "$marker" ] && pass "redis: key written before down is still there (AOF)" || fail "redis: key lost after down/up"
 make_dev keycloak-dev-seed >"$work/seed3.log" 2>&1 && [ "$(grep -c 'already exists (skipped)' "$work/seed3.log")" = "2" ] \
@@ -511,6 +611,18 @@ app_after="$(app_fingerprint)"
 [ "$(identity_rows backoffice_admin_user "$admin_sub")" = "1" ] && pass "backend: one administrator registered for the seed admin (just in time)" \
 	|| fail "backend: administrators for the seed admin: '$(identity_rows backoffice_admin_user "$admin_sub")'"
 redis_as store DEL store:dev-check:persist >/dev/null
+
+if [ "$OPTIONAL" = 1 ]; then
+	echo "== Optional services after down/up (volumes kept)"
+	[ -z "$(compose --profile '*' ps -q rabbitmq elasticsearch)" ] && pass "make up does not bring the optional services back" || fail "optional services started by make up after the restart"
+	step "make rabbitmq-up again on the existing volume" make_dev rabbitmq-up
+	step "make elasticsearch-up again on the existing volume" make_dev elasticsearch-up
+	[ "$(rabbitmq_queue_messages)" = "1" ] && pass "rabbitmq: durable queue and its persistent message survived down/up" || fail "rabbitmq: queue lost after down/up ('$(rabbitmq_queue_messages)')"
+	res="$(elasticsearch_api elastic "$es_pass" GET /dev-check/_doc/1)"
+	has "$(compact <<<"$res")" "\"marker\":\"${es_marker}\"" && pass "elasticsearch: document survived down/up" || fail "elasticsearch: document lost after down/up"
+	rabbitmq_api "$rmq_user" "$rmq_pass" DELETE /api/queues/%2F/dev-check >/dev/null
+	elasticsearch_api elastic "$es_pass" DELETE /dev-check >/dev/null
+fi
 
 echo
 if [ "$failures" -eq 0 ]; then
