@@ -13,12 +13,16 @@
   "dependencies": {
     "@radix-ui/react-dialog": "1.2.0",
     "@radix-ui/react-slot": "1.4.0",
+    "@redis/client": "6.3.0",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
+    "jose": "6.2.12",
     "lucide-react": "1.55.0",
     "next": "16.4.2",
+    "openid-client": "6.8.8",
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "server-only": "0.0.1",
     "tailwind-merge": "3.7.0"
   },
   "devDependencies": {

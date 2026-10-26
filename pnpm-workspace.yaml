@@ -7,3 +7,8 @@ engineStrict: true
 
 # Exact versions in package.json when adding dependencies (pnpm add).
 saveExact: true
+
+# openid-client depends on jose ^6; the store pins the same exact version for its own use
+# (back-channel logout tokens), so both resolve to one copy.
+overrides:
+  jose: 6.2.12
