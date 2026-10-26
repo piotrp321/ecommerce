@@ -202,6 +202,13 @@ redis_as() {
 	ops) compose exec -T redis-session sh -c 'REDISCLI_AUTH="$REDIS_OPS_PASSWORD" exec redis-cli --no-auth-warning --user ops "$@"' redis "$@" 2>&1 || true ;;
 	esac
 }
+# Published host bindings of a service's container, "<port>/<proto>=<host ip>:<host port> ..."
+# (from docker inspect, independent of the Compose version and its ps/port output).
+published_bindings() {
+	docker inspect -f '{{range $p, $b := .NetworkSettings.Ports}}{{range $b}}{{$p}}={{.HostIp}}:{{.HostPort}} {{end}}{{end}}' "$(compose ps -q "$1")" 2>/dev/null || true
+}
+# keycloak_ports_ok <bindings> <port>: exactly one binding, 8080/tcp on 127.0.0.1:<port>.
+keycloak_ports_ok() { [ "$(tr -s ' ' <<<"$1" | sed 's/ $//')" = "8080/tcp=127.0.0.1:$2" ]; }
 health() { docker inspect -f '{{.State.Health.Status}}' "$(compose ps -q "$1")" 2>/dev/null || true; }
 backend_health() { curl -sk --max-time 10 "https://localhost:${HTTPS_PORT}/health" || true; }
 store_home_ok() { curl -s --max-time 120 "http://localhost:${STORE_PORT}/" | grep -q '<h1>Sklep</h1>'; }
@@ -445,8 +452,9 @@ echo "== Exposure"
 ports="$(compose ps --format '{{.Service}} {{.Ports}}')"
 published="$(grep -oE '[][0-9a-f.:]+:[0-9]+->[0-9]+/(tcp|udp)' <<<"$ports" || true)"
 [ -n "$published" ] && ! grep -vqE '^127\.0\.0\.1:' <<<"$published" && pass "all published ports bound to 127.0.0.1 only" || fail "ports: ${published}"
-grep -q '^keycloak .*127.0.0.1:'"${KEYCLOAK_PORT}"'->8080/tcp' <<<"$ports" && ! grep -q -- '->9000' <<<"$ports" \
-	&& ! compose port keycloak 9000 >/dev/null 2>&1 && pass "keycloak publishes only 8080 (management port 9000 unpublished)" || fail "keycloak ports"
+kc_bindings="$(published_bindings keycloak)"
+keycloak_ports_ok "$kc_bindings" "$KEYCLOAK_PORT" && pass "keycloak publishes only 8080 on 127.0.0.1:${KEYCLOAK_PORT} (management port 9000 unpublished)" \
+	|| fail "keycloak ports: published '${kc_bindings% }', expected exactly '8080/tcp=127.0.0.1:${KEYCLOAK_PORT}'"
 grep -q '^redis-session .*127.0.0.1:'"${REDIS_PORT}"'->6379/tcp' <<<"$ports" && pass "redis-session published on 127.0.0.1:${REDIS_PORT} only" || fail "redis-session ports"
 
 echo "== Applications without Keycloak and Redis"
