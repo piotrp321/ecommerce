@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Creates the Keycloak role and database in the running dev PostgreSQL (service
-# "database"), idempotently, on every `make up`:
+# Creates the Keycloak role and database in the running PostgreSQL (service "database"),
+# idempotently: in development on every `make up`, in production (and in
+# check-prod-stack.sh) after the database starts and before Keycloak
+# (DOCKER_COMP="docker compose -f compose.yaml -f compose.prod.yaml"):
 # - role "keycloak" (LOGIN) and database "keycloak" owned by it, created only when missing,
 # - the role password is set again on every run from KEYCLOAK_DB_PASSWORD, read by psql
 #   from the database container environment (\getenv), never passed on a command line,
@@ -13,7 +15,7 @@
 #   and cannot create objects (no grants; PUBLIC has no CREATE on public since PostgreSQL 15).
 # It never drops or resets anything and does not use docker-entrypoint-initdb.d, so it
 # also works on an existing database volume.
-# DOCKER_COMP selects the Compose command (default "docker compose"), e.g. with -p.
+# DOCKER_COMP selects the Compose command (default "docker compose"), e.g. with -p or -f.
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
