@@ -8,67 +8,54 @@ use App\Tests\Support\ApiTestCase;
 use App\Tests\Support\Security\FakeOidcProvider;
 use App\Tests\Support\Security\TestTokens;
 use PHPUnit\Framework\Attributes\DataProvider;
-use Symfony\Component\Security\Core\Exception\BadCredentialsException;
-use Symfony\Component\Security\Http\AccessToken\AccessTokenHandlerInterface;
 
 /**
- * Keys of both realms come from OIDC discovery: cached, and an unavailable
- * identity provider means 401 within 3 seconds (never 500 or a hanging request).
+ * Keys of both realms come from OIDC discovery: cached in cache.oidc across
+ * requests, and an unavailable identity provider means 401 (never 500).
  */
 final class OidcDiscoveryTest extends ApiTestCase
 {
+    /**
+     * Discovery makes two sequential requests (the discovery document, then the
+     * JWKS), each limited to 1.5 s: at most 3 s per firewall before the 401.
+     */
     private const float MAX_DURATION = 1.5;
     private const float IDLE_TIMEOUT = 1.0;
 
-    /**
-     * The keys are cached in the cache.oidc pool (filesystem outside the tests)
-     * for the provider's max-age. The test pool is an array that the kernel
-     * empties between HTTP requests, so the firewalls' token handlers are
-     * called directly here.
-     */
     public function testDownloadsTheKeysOfARealmOnce(): void
     {
-        $store = self::handler('store_api');
-        $admin = self::handler('admin_api');
+        $this->customer('GET', '/me');
+        $this->assertStatus(200);
+        $this->customer('GET', '/me', ['email' => 'anna.nowak@example.com']);
+        $this->assertStatus(200);
+        $this->request('GET', '/me', token: TestTokens::customer(['sub' => 'c0ffee00-1111-4222-8333-444455556666']));
+        $this->assertStatus(200);
 
-        self::assertSame(TestTokens::CUSTOMER_SUBJECT, $store->getUserBadgeFrom(TestTokens::customer())->getUserIdentifier());
-        self::assertSame('c0ffee00-1111-4222-8333-444455556666', $store->getUserBadgeFrom(TestTokens::customer(['sub' => 'c0ffee00-1111-4222-8333-444455556666']))->getUserIdentifier());
-        $store->getUserBadgeFrom(TestTokens::customer(['email' => 'anna.nowak@example.com']));
         self::assertSame(1, FakeOidcProvider::jwksRequests());
 
-        $admin->getUserBadgeFrom(TestTokens::admin());
-        $admin->getUserBadgeFrom(TestTokens::admin(['email' => 'ola.kowalska@example.com']));
+        $this->admin('GET', '/admin/me');
+        $this->assertStatus(200);
+        $this->admin('GET', '/admin/catalog/products');
+        $this->assertStatus(200);
+
         self::assertSame(2, FakeOidcProvider::jwksRequests(), 'One download per realm.');
     }
 
     public function testAFailedDownloadIsNotCached(): void
     {
-        $store = self::handler('store_api');
         FakeOidcProvider::$mode = FakeOidcProvider::UNREACHABLE;
-        try {
-            $store->getUserBadgeFrom(TestTokens::customer());
-            self::fail('The token cannot be verified without the keys.');
-        } catch (BadCredentialsException) {
-        }
+        $this->customer('GET', '/me');
+        $this->assertProblem(401);
 
         FakeOidcProvider::$mode = FakeOidcProvider::AVAILABLE;
+        $this->customer('GET', '/me');
 
-        self::assertSame(TestTokens::CUSTOMER_SUBJECT, $store->getUserBadgeFrom(TestTokens::customer())->getUserIdentifier());
-    }
-
-    private static function handler(string $firewall): AccessTokenHandlerInterface
-    {
-        $handler = self::getContainer()->get('security.access_token_handler.'.$firewall);
-        \assert($handler instanceof AccessTokenHandlerInterface);
-
-        return $handler;
+        $this->assertStatus(200);
     }
 
     /**
      * The time budget of an unavailable provider: the mocked HTTP client answers
-     * at once, so the limits are checked on the options of every discovery
-     * request. Discovery makes two sequential requests (the discovery document,
-     * then the JWKS), each limited to 1.5 s: at most 3 s per firewall.
+     * at once, so the limits are checked on the options of every discovery request.
      */
     public function testTheDiscoveryOfAFirewallTakesAtMostThreeSeconds(): void
     {

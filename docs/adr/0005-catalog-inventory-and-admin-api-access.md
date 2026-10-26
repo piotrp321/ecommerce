@@ -104,8 +104,13 @@ Accounts, login and roles of customers and administrators live in an external id
        end with one row and no error. The profile is written only when it changed.
      - An `AdminUser` is registered only for a token with the administrator role. It stores no roles,
        only a local status: a blocked administrator gets 403 whatever the token says.
-   - Discovery documents and keys are cached in the `cache.oidc` pool (filesystem; an array in tests)
-     for the JWKS `Cache-Control: max-age` (1 hour without it, at most 30 days); failures are not cached.
+   - Discovery documents and keys are cached in the `cache.oidc` pool (filesystem in every environment;
+     the tests empty it before each test) for the JWKS `Cache-Control: max-age` (1 hour without it,
+     at most 30 days); failures are not cached.
+     The pool has no stampede lock (`src/Kernel.php`): with Symfony Cache's default `LockRegistry`,
+     concurrent requests outside the CLI wait for the one downloading the keys, and since a failure is
+     not cached, with a hanging identity provider they would retry one after another (the n-th 401 after
+     n timeouts). Without the lock every request makes its own bounded attempt.
      Discovery makes two sequential requests (the discovery document, then the JWKS); its HTTP client
      limits each to 1.5 s (1 s idle timeout), so an unreachable or slow identity provider means 401
      within 3 s, never 500 or a hanging request.

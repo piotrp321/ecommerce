@@ -8,6 +8,7 @@ use App\Tests\Support\Contract\OpenApiContract;
 use App\Tests\Support\Security\FakeOidcProvider;
 use App\Tests\Support\Security\TestTokens;
 use Doctrine\DBAL\Connection;
+use Psr\Cache\CacheItemPoolInterface;
 use Symfony\Bundle\FrameworkBundle\KernelBrowser;
 use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
 
@@ -27,6 +28,17 @@ abstract class ApiTestCase extends WebTestCase
         parent::setUp();
         $this->client = static::createClient();
         Database::reset(static::getContainer()->get('doctrine.dbal.default_connection'));
+        // The keys of the fake identity provider change on every test run.
+        self::oidcCache()->clear();
+    }
+
+    /**
+     * The OIDC discovery cache (filesystem, as in production): it survives
+     * kernel reboots, like across requests of a real server.
+     */
+    protected static function oidcCache(): CacheItemPoolInterface
+    {
+        return static::getContainer()->get('cache.oidc');
     }
 
     protected function tearDown(): void

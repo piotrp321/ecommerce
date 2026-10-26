@@ -20,13 +20,8 @@ framework:
 
         # OIDC discovery documents and signing keys (security.yaml). An entry lives
         # as long as the provider's Cache-Control max-age allows (1 hour without it).
+        # The same adapter in every environment: the tests empty it before each test
+        # (ApiTestCase), and src/Kernel.php turns off its stampede lock.
         pools:
             cache.oidc:
                 adapter: cache.adapter.filesystem
-
-when@test:
-    framework:
-        cache:
-            pools:
-                cache.oidc:
-                    adapter: cache.adapter.array
