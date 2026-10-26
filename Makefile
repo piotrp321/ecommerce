@@ -1,7 +1,7 @@
 # Monorepo commands. Convention:
 # - aggregate targets without a prefix (bootstrap, up, check, check-prod...),
 # - per-application targets prefixed with the app name (backend-*, admin-*, store-*, edge-*),
-# - the whole production topology prefixed with stack-,
+# - the whole topology prefixed with stack- (stack-check-prod, stack-check-dev),
 # - the dev identity provider (Keycloak) prefixed with keycloak-,
 # - the API contract (docs/api/openapi.yaml) prefixed with contract-,
 # - pnpm workspace targets prefixed with pnpm-.
@@ -23,7 +23,7 @@ PNPM        = $(DOCKER_COMP) run --rm --no-deps admin pnpm
 	backend-test backend-stan backend-arch backend-check backend-build-prod \
 	admin-lint admin-typecheck admin-test admin-build admin-check admin-build-prod admin-check-prod \
 	store-lint store-typecheck store-test store-build store-check store-build-prod store-check-prod \
-	edge-build-prod stack-check-prod keycloak-dev-seed contract-lint
+	edge-build-prod stack-check-prod stack-check-dev keycloak-dev-seed contract-lint
 
 ## —— Help ———————————————————————————————————————————————————————————————————
 help: ## List available targets
@@ -154,12 +154,15 @@ store-check-prod: store-build-prod ## Run the store prod image on 127.0.0.1:8082
 keycloak-dev-seed: ## Create the dev-only test users (store customer, admin with TOTP); idempotent, needs `make up`
 	@DOCKER_COMP="$(DOCKER_COMP)" ./infra/scripts/keycloak-dev-seed.sh
 
-## —— Edge and production topology ———————————————————————————————————————————
+## —— Edge, production topology and dev topology check ————————————————————————
 edge-build-prod: ## Build the edge proxy image (Caddy, configuration baked in)
 	@docker build --pull --file infra/edge/Dockerfile --target edge_prod --tag $(IMAGES_PREFIX)ecommerce-edge .
 
 stack-check-prod: backend-build-prod admin-build-prod store-build-prod edge-build-prod ## Run the whole prod topology in an ephemeral project (edge 8080/8443) and check it
 	@./infra/scripts/check-prod-stack.sh
+
+stack-check-dev: ## Run the dev topology in its own project (ecommerce-dev-check) and check Keycloak, Redis and exposure
+	@./infra/scripts/check-dev-infra.sh
 
 ## —— API contract (docs/api/openapi.yaml) ————————————————————————————————————
 contract-lint: ## Lint the OpenAPI contract (Redocly, recommended-strict, redocly.yaml)

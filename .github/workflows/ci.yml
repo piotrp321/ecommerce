@@ -36,8 +36,9 @@ jobs:
           persist-credentials: false
 
       # Exactly the fresh-clone setup documented in README: build the dev images,
-      # install the pnpm workspace into its volumes, start PostgreSQL, the backend
-      # and the admin/store dev servers, install Composer dependencies, run migrations.
+      # install the pnpm workspace into its volumes, start PostgreSQL (with the Keycloak
+      # database), the backend, the admin/store dev servers, Keycloak and the Redis
+      # session store, install Composer dependencies, run migrations.
       - name: Bootstrap the development environment
         run: make bootstrap
 
@@ -46,6 +47,12 @@ jobs:
       # Admin and store: ESLint, TypeScript type check, Vitest and the production build.
       - name: Run all quality gates
         run: make check
+
+      # Keycloak (realms, clients, PKCE, logins with the dev seed users), Redis (ACL,
+      # noeviction, persistence), port exposure and the apps without Keycloak/Redis,
+      # in a separate Compose project (ecommerce-dev-check) next to the one above.
+      - name: Check the development infrastructure
+        run: make stack-check-dev
 
       - name: Show container logs on failure
         if: failure()
