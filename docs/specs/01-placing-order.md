@@ -3,7 +3,8 @@
 ## Kontekst specyfikacji
 Dokument jest wynikiem analizy biznesowej pierwszego przypadku użycia. Nie zawiera architektury ani kodu.
 Zaakceptowany przez PO jako podstawa projektu. Realizacja etapami wg roadmapy.
-Uzupełnienie z roadmapy: M4 obejmuje zabezpieczenie przed powtórnym wykonaniem żądania złożenia zamówienia (idempotency key). Szczegóły reguł zostaną ustalone przy planowaniu M4.
+Uzupełnienie z roadmapy: M5 obejmuje zabezpieczenie przed powtórnym wykonaniem żądania złożenia zamówienia (idempotency key). Szczegóły reguł zostaną ustalone przy planowaniu M5.
+Uzupełnienie z roadmapy: koszyk obsługuje także gości. Gość może budować koszyk, a po zalogowaniu jego koszyk jest scalany z koszykiem klienta. Reguły scalania zostaną ustalone przy planowaniu milestone'u Koszyk (M4).
 
 ## 1. Zakres
 
@@ -17,7 +18,7 @@ Uzupełnienie z roadmapy: M4 obejmuje zabezpieczenie przed powtórnym wykonaniem
 - Waluta: wyłącznie PLN.
 
 ### Poza zakresem MVP
-- Zakupy bez rejestracji (gość).
+- Składanie zamówienia przez gościa (bez logowania): zamówienie składa wyłącznie zalogowany klient (R1). Sam koszyk gościa jest w zakresie.
 - Wielowalutowość, kursy walut, VAT przy sprzedaży zagranicznej (OSS).
 - Klienci B2B i prezentacja cen netto.
 - Koszt dostawy zależny od wagi lub progu darmowej dostawy.
@@ -27,7 +28,7 @@ Uzupełnienie z roadmapy: M4 obejmuje zabezpieczenie przed powtórnym wykonaniem
 | Pojęcie | Znaczenie |
 |---|---|
 | Klient | Zalogowany, zarejestrowany użytkownik. Każde zamówienie należy do dokładnie jednego klienta. |
-| Koszyk | Lista produktów i ilości przygotowana przez klienta. Nie gwarantuje ceny ani dostępności. |
+| Koszyk | Lista produktów i ilości przygotowana przez klienta albo gościa; po zalogowaniu koszyk gościa jest scalany z koszykiem klienta. Nie gwarantuje ceny ani dostępności. |
 | Pozycja zamówienia | Produkt, ilość i snapshot cen z chwili złożenia zamówienia. |
 | Rezerwacja | Zablokowanie ilości produktu dla zamówienia. Zarezerwowanych sztuk nie mogą kupić inni klienci. |
 | Czas na płatność | Konfigurowalny okres od złożenia zamówienia, w którym klient musi zapłacić. |
