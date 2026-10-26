@@ -47,6 +47,11 @@ status_of() { cut -d' ' -f1 <<<"$1"; }
 # Value of a cookie in the jar (Netscape format; HttpOnly cookies are prefixed with #HttpOnly_).
 cookie() { awk -v name="$1" '$6 == name { value = $7 } END { print value }' "$JAR"; }
 cookie_line() { awk -v name="$1" '$6 == name' "$JAR"; }
+# Cookies of the store only: the jar also holds Keycloak's (cookies are not scoped by port,
+# so on localhost KEYCLOAK_IDENTITY, a JWT, is there too), all with a path under /realms/.
+store_cookie_lines() { awk -F'\t' 'NF >= 7 && $3 !~ /^\/realms\// { print }' "$JAR"; }
+# A JWT (header.payload.signature, base64url of '{"') anywhere in the input.
+has_jwt() { grep -qE 'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.' "$@"; }
 html_unescape() { sed -e 's/&amp;/\&/g' -e 's/&#x2F;/\//g' -e 's/&quot;/"/g'; }
 
 echo "== Login flow (${STORE_URL}, user ${AUTH_USER})"
@@ -87,22 +92,26 @@ session="$(cookie "$SESSION_COOKIE")"
 	&& pass "session cookie ${SESSION_COOKIE} is an opaque HttpOnly id" || fail "session cookie: '$(cookie_line "$SESSION_COOKIE")'"
 grep -i '^set-cookie:' "$WORK/headers" | grep -qi 'samesite=lax' && pass "session cookie is SameSite=Lax" || fail "session cookie SameSite"
 [ -z "$(cookie "$LOGIN_COOKIE")" ] && pass "login cookie removed after the callback" || fail "login cookie left after the callback"
-! grep -q 'eyJ' "$JAR" "$WORK/headers" && pass "no token in cookies or response headers" || fail "token found in cookies or headers"
+! has_jwt <(store_cookie_lines) "$WORK/headers" && pass "no token in the store's cookies or in its callback response headers" || fail "token found in the store's cookies or headers"
 
 # 6. The account page shows the profile from GET /me of the backend.
 result="$(request "$STORE_URL/konto")"
 [ "$(status_of "$result")" = "200" ] && grep -qF "$AUTH_USER" "$WORK/body" \
 	&& pass "/konto shows the account of ${AUTH_USER}" || die "/konto after login: ${result}"
-! grep -q 'eyJ' "$WORK/body" && pass "no token in the HTML" || fail "token in the HTML of /konto"
+! has_jwt "$WORK/body" && pass "no token in the HTML" || fail "token in the HTML of /konto"
 cp "$WORK/body" "$WORK/account.html"
 
 # 7. Logout is a Server Action: a form post with its action id (progressive enhancement).
 action_field="$(grep -oE 'name="\$ACTION_ID_[0-9a-f]+"' "$WORK/account.html" | head -n1 | cut -d'"' -f2)"
 [ -n "$action_field" ] && pass "logout form found" || die "no logout form on /konto"
 
+for origin in null 'not a url'; do
+	rejected="$(request -H "Origin: ${origin}" -F "${action_field}=" "$STORE_URL/konto")"
+	[ "$(status_of "$rejected")" = "403" ] && pass "logout with Origin '${origin}' is rejected with 403" || fail "Origin '${origin}' logout: ${rejected}"
+done
 result="$(request -H 'Origin: https://evil.example' -F "${action_field}=" "$STORE_URL/konto")"
 after="$(request "$STORE_URL/konto")"
-[[ "$(location_of "$result")" != *"/protocol/openid-connect/logout"* ]] && [ "$(status_of "$after")" = "200" ] \
+[ "$(status_of "$result")" = "403" ] && [ "$(status_of "$after")" = "200" ] \
 	&& pass "logout from a foreign Origin is rejected, the session stays" || fail "foreign Origin logout: ${result} / ${after}"
 
 result="$(request -H "Origin: ${STORE_URL}" -F "${action_field}=" "$STORE_URL/konto")"
