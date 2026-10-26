@@ -3,6 +3,8 @@
 - Status: accepted
 - Date: 2026-10-25
 
+> **Continued by [ADR-0010](0010-agentic-sdlc-performance.md):** models and effort per role, module checks during implementation with one full `make check` per round, FULL then DELTA review and QA, and the CI production image check on demand only.
+
 ## Context
 
 Most of the code in this repository is written by AI agents ([ADR-0001](0001-monorepo-layout.md)). Until now a single agent session planned, implemented, tested and reviewed its own work, so the same context that wrote the code also judged it. The project is a vehicle for learning Agentic Software Development, and we want a first, repeatable delivery process with separated roles. Constraints:

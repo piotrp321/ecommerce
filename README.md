@@ -145,34 +145,38 @@ Inna wersja Node niż w `.node-version` kończy `pnpm install` błędem (`engine
 
 ## CI
 
-GitHub Actions (`.github/workflows/ci.yml`) uruchamia się dla każdego Pull Requesta do `main` i po pushu na `main`, na runnerze `ubuntu-24.04`, z tokenem tylko do odczytu. Używa tych samych komend co lokalnie:
+GitHub Actions (`.github/workflows/ci.yml`) działa na runnerze `ubuntu-24.04`, z tokenem tylko do odczytu, i używa tych samych komend co lokalnie:
 
-- **Quality gates:** `make bootstrap` (dokładnie jak w „Uruchomienie”) i `make check` (lint kontraktu API; backend: composer validate, lint, Deptrac, PHPStan max, PHPUnit z walidacją każdej odpowiedzi API względem kontraktu i zgodnością tras; admin i sklep: ESLint, TypeScript, Vitest, build),
-- **Production images:** `make check-prod` (obrazy admina i sklepu osobno, potem cała topologia z edge, z jednorazowymi, generowanymi sekretami).
+- **Quality gates** (automatycznie dla każdego Pull Requesta do `main` i po pushu na `main`): `make bootstrap` (dokładnie jak w „Uruchomienie”) i `make check` (lint kontraktu API; backend: composer validate, lint, Deptrac, PHPStan max, PHPUnit z walidacją każdej odpowiedzi API względem kontraktu i zgodnością tras; admin i sklep: ESLint, TypeScript, Vitest, build),
+- **Production image** (czasowo tylko ręcznie, `workflow_dispatch`): `make check-prod` (obrazy admina i sklepu osobno, potem cała topologia z edge, z jednorazowymi, generowanymi sekretami). Uruchomienie z zakładki Actions albo `gh workflow run ci.yml --ref <gałąź>` wykonuje tylko ten job. Zalecane przed merge zmian wpływających na obrazy produkcyjne: `infra/`, `compose*.yaml`, `Makefile`, Dockerfile, manifesty i lockfile zależności.
+
+Ręczny przebieg i automatyczne Quality gates na `main` są w osobnych grupach `concurrency`, więc nie anulują się nawzajem.
 
 Workflow nie korzysta z żadnych sekretów repozytorium.
 
 ## Agentic SDLC (Claude Code)
 
-Funkcjonalności można dostarczać procesem z rozdzielonymi rolami ([ADR-0008](docs/adr/0008-agentic-sdlc-claude-code.md)):
+Funkcjonalności można dostarczać procesem z rozdzielonymi rolami ([ADR-0008](docs/adr/0008-agentic-sdlc-claude-code.md), wersja 1.1: [ADR-0010](docs/adr/0010-agentic-sdlc-performance.md)):
 
 ```
 /feature-delivery <opis zadania>
 ```
 
-| Rola | Plik | Zakres |
-|---|---|---|
-| Orchestrator | `.claude/skills/feature-delivery/SKILL.md` | analiza, plan i kryteria akceptacji, bramki zgody, delegowanie, triage uwag, końcowy `make check`, PR, raport |
-| Developer | `.claude/agents/developer.md` | implementacja i testy we własnym worktree, `make check` przed commitem, poprawki |
-| Code Reviewer | `.claude/agents/code-reviewer.md` | review commita (SHA) względem bazy, tylko odczyt, `APPROVE` / `REQUEST CHANGES` |
-| QA Tester | `.claude/agents/qa-tester.md` | testy działającej aplikacji na tym samym SHA, błędy z krokami odtworzenia, retest |
+| Rola | Plik | Model / effort | Zakres |
+|---|---|---|---|
+| Orchestrator | `.claude/skills/feature-delivery/SKILL.md` (+ `reports.md`) | model głównej sesji | analiza, plan i kryteria akceptacji, bramki zgody, delegowanie, triage uwag, `make check` tylko bez wiarygodnego wyniku Developera, PR, raport wykonania |
+| Developer | `.claude/agents/developer.md` | opus / medium | implementacja i testy we własnym worktree, kontrole zmienianych modułów, pełne `make check` na wersji do review, poprawki |
+| Code Reviewer | `.claude/agents/code-reviewer.md` | opus / high | review commita (SHA), tylko odczyt, FULL w 1. rundzie, potem DELTA, `APPROVE` / `REQUEST CHANGES` |
+| QA Tester | `.claude/agents/qa-tester.md` | sonnet / medium | testy działającej aplikacji na tym samym SHA, FULL w 1. rundzie, potem DELTA (retest i regresja), błędy z krokami odtworzenia |
 
-Przebieg: plan → akceptacja użytkownika → Developer → równolegle Code Review i QA na tym samym SHA → poprawki (najwyżej 3 rundy, potem eskalacja) → `make check` → zgoda użytkownika na push i draft PR → CI → raport. Blokują tylko uwagi P0/P1 i niespełnione kryteria akceptacji. Merge wyłącznie na polecenie użytkownika.
+Przebieg: plan → akceptacja użytkownika → Developer → równolegle Code Review i QA (FULL) na tym samym SHA → poprawki i DELTA (najwyżej 3 rundy, potem eskalacja) → `make check` (bez powtarzania wyniku Developera dla tego samego SHA) → zgoda użytkownika na push i draft PR → CI → raport z `AGENTIC SDLC — EXECUTION REPORT`. Blokują tylko uwagi P0/P1 i niespełnione kryteria akceptacji. Merge wyłącznie na polecenie użytkownika.
+
+Model i effort subagentów ustala ich frontmatter, który ma pierwszeństwo przed `CLAUDE_CODE_SUBAGENT_MODEL`. Nadpisują go tylko zmienne środowiskowe `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` (model) i `CLAUDE_CODE_EFFORT_LEVEL` (effort); ustawienia projektu ich nie ustawiają. Orchestrator nie przekazuje modelu ani effortu przy wywołaniu agenta. Rzeczywisty model i effort działającego subagenta pokazuje `/tasks`.
 
 Zabezpieczenia:
 
 - Każdy agent uruchamia Dockera we własnym projekcie Compose (`fd-<slug>-dev`, `fd-<slug>-qa`), zapisanym w `.env` w katalogu głównym swojego worktree (plik ignorowany przez git), i przed pierwszym poleceniem sprawdza izolację. Projekt `ecommerce` i projekty innych sesji nie są dotykane.
-- `make check-prod` nie jest uruchamiany automatycznie (stała nazwa projektu `ecommerce-prod-check`). Kontrole prod wykonuje CI.
+- `make check-prod` nie jest uruchamiany lokalnie (stała nazwa projektu `ecommerce-prod-check`). Job CI `production-image` uruchamia się tylko ręcznie; przy zmianach wpływających na obrazy produkcyjne Orchestrator zaleca go przed merge.
 - `.claude/settings.json` wymusza pytanie o zgodę przy push, merge, usuwaniu gałęzi i worktree, destrukcyjnych operacjach git i usuwaniu wolumenów Dockera. To dodatkowa warstwa: skill ma własne bramki zgody.
 - Proces niczego nie usuwa. Raport końcowy zawiera komendy sprzątania (worktree, gałęzie, projekty Compose).
 
@@ -182,7 +186,7 @@ W repozytorium są tylko `.claude/settings.json`, `.claude/skills/` i `.claude/a
 
 Sprawdzenie bez implementowania funkcjonalności, w sesji Claude Code w katalogu repozytorium:
 
-1. **Konfiguracja:** `/agents` wymienia `developer`, `code-reviewer` i `qa-tester` jako agentów projektu, a `/feature-delivery` jest w menu z podpowiedzią `<opis zadania>`.
+1. **Konfiguracja:** `/agents` wymienia `developer`, `code-reviewer` i `qa-tester` jako agentów projektu, a `/feature-delivery` jest w menu z podpowiedzią `<opis zadania>`. Podczas pracy subagenta `/tasks` pokazuje jego model i effort (developer opus/medium, code-reviewer opus/high, qa-tester sonnet/medium).
 2. **Izolacja Developera:** „Użyj subagenta developer. Podaj tylko wynik `pwd`, `git branch --show-current`, `git rev-parse --git-dir` i `git rev-parse --git-common-dir`. Niczego nie zmieniaj.” Oczekiwane: katalog w `.claude/worktrees/`, różne `git-dir` i `git-common-dir`, worktree usunięty po zakończeniu (brak zmian).
 3. **Code Reviewer:** „Użyj subagenta code-reviewer. BASE=`<sha>^`, REVIEW_SHA=`<sha>`, zadanie: <opis zmergowanego PR>.” Oczekiwane: raport z `VERDICT` i uwagami w ustalonym formacie, `git status` bez zmian.
 4. **QA:** subagent qa-tester z kryterium istniejącej funkcji, np. „GET /catalog/products/{nieistniejący slug} zwraca 404 w formacie problem+json”, REVIEW_SHA = `origin/main` i profilem `fd-smoke-qa` (porty 28xxx). Oczekiwane: `VERDICT`, własny projekt w `docker compose ls`, kontenery `ecommerce` bez zmian (`docker ps` przed i po). Na commicie bez wpisu `/.env` w `.gitignore` QA celowo zwraca `BLOCKED` i nie uruchamia Dockera.

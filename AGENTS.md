@@ -34,12 +34,12 @@ Konwencja: cele zbiorcze bez prefiksu, cele aplikacji z prefiksem nazwy aplikacj
 
 - `make bootstrap`: środowisko dev od zera (build, `pnpm-install`, up, Composer, migracje), dokładnie tak jak w README
 - `make up`, `make down`, `make logs`: kontenery dev (`down` nie usuwa wolumenów)
-- `make check`: **obowiązkowa bramka przed każdym commitem** (lint kontraktu API i wszystkie aplikacje)
+- `make check`: **obowiązkowa bramka przed każdym commitem** (lint kontraktu API i wszystkie aplikacje). Wyjątek: w procesie `/feature-delivery` Developer przed pośrednimi commitami uruchamia kontrole zmienianych modułów, a pełne `make check` na wersji przekazywanej do review ([ADR-0010](docs/adr/0010-agentic-sdlc-performance.md))
 - `make contract-lint`: lint `docs/api/openapi.yaml` (Redocly, `redocly.yaml`); zgodność backendu z kontraktem sprawdzają testy backendu
 - `make build-prod`: obrazy produkcyjne; sekrety podaje się dopiero przy uruchomieniu (`compose.prod.yaml`)
 - `make check-prod`: kontrola obrazów admina (8081) i sklepu (8082) oraz całej topologii prod z edge w tymczasowym projekcie (8080/8443: routing, ekspozycja, uprawnienia, backend, niezależne wdrożenia); uruchamiaj po zmianach w `infra/`, `compose*.yaml` lub `Makefile`
 - `make pnpm-install`, `make pnpm c="…"`: zależności JS i pnpm w kontenerze (`node_modules` w wolumenach Dockera)
-- CI (`.github/workflows/ci.yml`) uruchamia te same komendy: `make bootstrap`, `make check`, `make check-prod`. Nowe kontrole dodawaj do `Makefile`, nie bezpośrednio do workflow.
+- CI (`.github/workflows/ci.yml`) uruchamia te same komendy: `make bootstrap` i `make check` automatycznie dla PR i pushy do `main`, a `make check-prod` czasowo tylko ręcznie (`workflow_dispatch`, np. `gh workflow run ci.yml --ref <gałąź>`), zalecany przed merge zmian wpływających na obrazy produkcyjne (`infra/`, `compose*.yaml`, `Makefile`, Dockerfile, manifesty i lockfile zależności). Nowe kontrole dodawaj do `Makefile`, nie bezpośrednio do workflow.
 
 ## Frontend: tryb lokalny i Docker
 
@@ -52,7 +52,7 @@ Nie kopiuj ani nie montuj `node_modules` między hostem a kontenerem. Każdy pak
 
 ## Zasady pracy
 
-- Małe commity, każdy z działającym stanem i zielonym `make check`. Format: `type: opis` (`feat`, `fix`, `chore`, `build`, `ci`, `docs`, `test`, `refactor`).
+- Małe commity, każdy z działającym stanem i zielonym `make check` (w `/feature-delivery`: zielone kontrole zmienianych modułów, pełne `make check` na końcowym SHA). Format: `type: opis` (`feat`, `fix`, `chore`, `build`, `ci`, `docs`, `test`, `refactor`).
 - Przed commitem przejrzyj staged diff (`git diff --cached`). Nie dodawaj zmian, których nie wprowadzałeś.
 - Przenosząc pliki, używaj `git mv` (zachowanie historii) i nie zmieniaj przy tym ich treści bez potrzeby.
 - Nie rozszerzaj zakresu ponad bieżący etap. Pomysły zapisuj jako propozycje dla użytkownika.
