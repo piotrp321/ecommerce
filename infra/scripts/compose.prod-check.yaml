@@ -25,3 +25,9 @@ services:
     volumes: !reset []
     tmpfs:
       - /var/lib/postgresql
+
+  # Keycloak keeps its data in the check database (tmpfs above); Redis gets a tmpfs as well.
+  redis-session:
+    volumes: !reset []
+    tmpfs:
+      - /data:uid=999,gid=1000
