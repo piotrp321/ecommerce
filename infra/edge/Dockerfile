@@ -30,7 +30,7 @@ ENV XDG_DATA_HOME=/data \
 COPY --link --from=caddy_binary /usr/bin/caddy /usr/bin/caddy
 COPY --link infra/edge/Caddyfile /etc/caddy/Caddyfile
 
-RUN STORE_DOMAIN=store.example.test ADMIN_DOMAIN=admin.example.test \
+RUN STORE_DOMAIN=store.example.test ADMIN_DOMAIN=admin.example.test AUTH_DOMAIN=auth.example.test \
 	caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
 USER app

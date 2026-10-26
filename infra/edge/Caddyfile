@@ -1,8 +1,12 @@
 # Central edge proxy (production): the only public entry point.
-# - TLS termination with automatic certificates for STORE_DOMAIN and ADMIN_DOMAIN,
+# - TLS termination with automatic certificates for STORE_DOMAIN, ADMIN_DOMAIN and AUTH_DOMAIN,
 # - routing by domain and path:
 #     https://STORE_DOMAIN/api/*  -> backend (prefix /api removed), everything else -> store
+#       (except the internal-only paths /api/admin/* and /auth/backchannel-logout: 404)
 #     https://ADMIN_DOMAIN/api/*  -> backend (prefix /api removed), everything else -> admin
+#     https://AUTH_DOMAIN         -> Keycloak, browser endpoints of the realms store and
+#       admin only; everything else (admin console, master realm, server-to-server
+#       endpoints, health, metrics) 404
 # - plain HTTP only redirects to HTTPS (and serves ACME HTTP challenges).
 # Runs as an unprivileged user on 8080/8443; Compose publishes them as 80/443.
 # Upstreams are resolved per connection, so each app can be redeployed on its own.
@@ -37,6 +41,13 @@
 	request_body {
 		max_size 10MB
 	}
+	# Internal only: the admin API belongs to ADMIN_DOMAIN, and Keycloak calls the store's
+	# back-channel logout inside the network (http://store:3000/auth/backchannel-logout).
+	# Caddy matches the decoded, cleaned path; ";" (matrix parameters) is matched explicitly.
+	@internal_only path_regexp (?i)^/(api/admin|auth/backchannel-logout)([/;]|$)
+	handle @internal_only {
+		respond 404
+	}
 	import backend_api
 	handle {
 		reverse_proxy store:3000
@@ -57,6 +68,37 @@
 	log
 }
 
-http://{$STORE_DOMAIN}, http://{$ADMIN_DOMAIN} {
+# Identity provider (Keycloak): only what a browser needs (login pages, discovery, JWKS,
+# logout, static resources) of the realms store and admin. Server-to-server endpoints
+# (token, userinfo, revocation, introspection, extensions, device flow, client
+# registration) are reachable only inside the network (http://keycloak:8080). Keycloak sets
+# its own security headers (CSP, X-Frame-Options); the edge adds transport headers only.
+{$AUTH_DOMAIN} {
+	import security_headers
+	request_body {
+		max_size 64KB
+	}
+	# Caddy matches the decoded path with empty and dot segments already cleaned, so only
+	# the characters it keeps are rejected here: ";" (matrix parameters, which Keycloak may
+	# strip) and "\" never reach Keycloak.
+	@ambiguous path_regexp [;\\]
+	@server_to_server path_regexp (?i)^/realms/(store|admin)/(protocol/openid-connect/(token|userinfo|revoke|ext|auth/device)|clients-registrations)(/|$)
+	@browser path /realms/store/* /realms/admin/* /resources/*
+	handle @ambiguous {
+		respond 404
+	}
+	handle @server_to_server {
+		respond 404
+	}
+	handle @browser {
+		reverse_proxy keycloak:8080
+	}
+	handle {
+		respond 404
+	}
+	log
+}
+
+http://{$STORE_DOMAIN}, http://{$ADMIN_DOMAIN}, http://{$AUTH_DOMAIN} {
 	redir https://{host}{uri} 308
 }
