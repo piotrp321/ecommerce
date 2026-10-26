@@ -33,7 +33,7 @@ Requirements:
 4. **Same-origin API.**
    - The admin calls the backend under `/api`. In development the Vite server proxies `/api` to the backend and strips the prefix; in production the central edge does (stage 4).
    - Browser-visible configuration (`VITE_*`) never holds secrets or API addresses.
-   - Future authentication: HttpOnly cookies, CSRF protection for state-changing requests, authorisation always enforced by the backend.
+   - Authentication is OIDC (Keycloak) with the session kept in a BFF; the browser never holds tokens. The backend is stateless and authorisation is always enforced by the backend ([architecture](../architecture.md)).
 
 5. **Production image** (`infra/docker/admin`):
    - built from the repository root with an allowlist, with a frozen-lockfile install and the Vite build;
