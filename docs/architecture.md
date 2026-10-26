@@ -16,7 +16,7 @@ Główne źródło prawdy o architekturze systemu. Dokument ma dwie wyraźnie od
 
 ### Przepływy komunikacji
 
-- Przeglądarka woła `/api/...` na własnej domenie (same-origin). Edge przekazuje to do backendu bez prefiksu `/api`; w dev robią to serwery Vite i Next.js.
+- Przeglądarka woła `/api/...` na własnej domenie (same-origin). Edge przekazuje to do backendu bez prefiksu `/api`; w dev robi to serwer Vite admina. Sklep nie ma proxy `/api`: woła backend wyłącznie po stronie serwera (`STORE_BACKEND_URL`).
 - Store renderuje katalog na serwerze i woła backend bezpośrednio (server-to-server, `STORE_BACKEND_URL`, bez edge i bez prefiksu `/api`) ([ADR-0009](adr/0009-store-catalog-api.md)).
 - Nagłówek `Authorization` przechodzi przez edge bez zmian.
 - Tylko edge ma publiczne porty; backend, store, admin i baza nie są publikowane.
@@ -50,28 +50,28 @@ Poniższe elementy nie są jeszcze wdrożone. Opisują decyzje, do których zmie
 Przeglądarka
    |  HTTPS
    v
- edge (Caddy) --------------------------+
-   |  STORE_DOMAIN     |  ADMIN_DOMAIN  |  AUTH_DOMAIN (tylko realm admin)
-   v                   v                v
- store (Next.js, BFF)  admin (SPA)    Keycloak  <-- logowanie (OIDC)
-   |      |               |             ^  ^
-   |      v               |             |  | JWKS (sieć wewnętrzna)
-   |  redis-session       |             |  |
-   |  (sesje, tokeny      |             |  |
-   |   szyfrowane)        |             |  |
-   |                      |             |  |
-   +--- Bearer (JWT) -----+--> backend (Symfony, bezstanowy) --+
-                                  |
-                                  v
-                             PostgreSQL
+ edge (Caddy)
+   |  STORE_DOMAIN        |  ADMIN_DOMAIN       |  AUTH_DOMAIN
+   |                      |                     |  (/realms/store, /realms/admin;
+   v                      v                     |   konsola /admin/ niepubliczna)
+ store (Next.js, BFF)   oauth2-proxy / admin-bff  Keycloak <-- logowanie (OIDC)
+   |      |                |      |                 ^  ^
+   |      v                v      v (SPA statyczna) |  | JWKS (sieć wewnętrzna)
+   |  redis-session     admin (SPA)                |  |
+   |  (sesje, tokeny                               |  |
+   |   szyfrowane)                                 |  |
+   +--- Bearer (JWT) -----+-- Bearer (JWT) ------> backend (Symfony, bezstanowy)
+        (dokleja store)       (dokleja proxy)         |
+                                                      v
+                                                 PostgreSQL
 ```
 
-Store i admin nie przechowują tokenów w przeglądarce. Backend nie trzyma sesji: przy każdym żądaniu waliduje JWT.
+Tokeny dokleja po stronie serwera BFF sklepu oraz oauth2-proxy / admin-bff; SPA admina i przeglądarka ich nie widzą. Backend nie trzyma sesji: przy każdym żądaniu waliduje JWT.
 
 ### Keycloak (tożsamość)
 
 - Jedna instancja Keycloak 26.8.0, dwa realmy: `store` (klienci sklepu) i `admin` (administratorzy; MFA).
-- Issuer publiczny: dev `http://localhost:8180/realms/<realm>`, prod `https://${AUTH_DOMAIN}/realms/<realm>`. Publicznie na `AUTH_DOMAIN` będzie dostępne tylko logowanie realmu `admin`; konsola administracyjna Keycloak nie będzie publiczna.
+- Issuer publiczny: dev `http://localhost:8180/realms/<realm>`, prod `https://${AUTH_DOMAIN}/realms/<realm>`. Na `AUTH_DOMAIN` będą publiczne endpointy obu realmów (`/realms/store/...`, `/realms/admin/...`, m.in. przekierowanie z `store-bff` na `/realms/store/protocol/openid-connect/auth`); konsola administracyjna Keycloak (`/admin/...`) nie będzie publiczna.
 - Discovery i JWKS pobierane przez sieć wewnętrzną: `http://keycloak:8080/realms/<realm>/` (`KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`), a nie przez adres publiczny.
 - Klienci: `store-bff` (poufny, Authorization Code + PKCE S256), `admin-bff` (zarezerwowany pod przyszły BFF admina), `store-api` i `admin-api` (występują jako audience tokenów, przez audience mapper). Rola klienta `admin` na `admin-api` odpowiada `ROLE_ADMIN` w backendzie.
 

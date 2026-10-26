@@ -11,7 +11,7 @@ Edukacyjny system e-commerce rozwijany jako monorepo. Projekt służy do nauki A
 - Wymagania biznesowe: `docs/specs/`. Nie zmieniaj ustalonych reguł bez decyzji użytkownika.
 - Zakres etapów: `docs/roadmap.md`. Realizuj wyłącznie bieżący etap.
 - Architektura: `docs/architecture.md` (główne źródło prawdy o architekturze: stan aktualny i wyraźnie oddzielone plany).
-- Decyzje architektoniczne: `docs/adr/`. ADR opisuje obowiązującą decyzję i jej uzasadnienie; przy zmianie decyzji aktualizuj ADR w miejscu.
+- Decyzje architektoniczne: `docs/adr/`. Nowa istotna decyzja = nowy ADR; zmiana obowiązującej decyzji = aktualizacja ADR w miejscu (ADR opisuje obowiązującą decyzję i jej uzasadnienie).
 
 ## Dokumentacja
 

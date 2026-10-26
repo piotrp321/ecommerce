@@ -15,7 +15,8 @@ Stan aktualny: panel nie loguje i nie łączy się z API.
 Plan ([architektura](../../docs/architecture.md)): logowanie przez OIDC (Keycloak, realm `admin`), wstępnie z oauth2-proxy, docelowo ewentualnie własny BFF.
 
 - Autoryzacja zawsze na backendzie; ukrycie elementu w UI nie jest zabezpieczeniem.
-- Sesja żyje w BFF (po stronie serwera), nie w backendzie, który jest bezstanowy. Żadnych tokenów w przeglądarce: ani w `localStorage`, ani w `sessionStorage`.
+- Sesja żyje w warstwie sesji (oauth2-proxy lub BFF), nie w backendzie, który jest bezstanowy. Ciasteczko sesji: `HttpOnly`, `Secure`, `SameSite`. Żadnych tokenów w przeglądarce: ani w `localStorage`, ani w `sessionStorage`.
+- Żądania zmieniające stan muszą przechodzić ochronę CSRF/Origin na warstwie sesji; samo `SameSite` nie wystarcza, bo `STORE_DOMAIN` i `ADMIN_DOMAIN` mogą być same-site.
 - Zmienne `VITE_*` trafiają do publicznego bundla: nigdy nie umieszczaj w nich sekretów. Adresy API nie są potrzebne, bo `/api` jest same-origin.
 
 ## Struktura i tryb demonstracyjny

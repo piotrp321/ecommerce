@@ -29,7 +29,7 @@ Otwarte pozycje; jeden Pull Request na etap.
 
 | Etap | Zakres | Status |
 |---|---|---|
-| 5 | `packages/sdk` generowany z kontraktu OpenAPI, uzgodniony z pracą nad sklepem i adminem | w trakcie |
+| 5 | `packages/sdk` generowany z kontraktu OpenAPI, uzgodniony z pracą nad sklepem i adminem | planowany |
 | 6 | Optymalizacja CI dla monorepo, tylko przy mierzalnej potrzebie | planowany |
 
 ## Przed uruchomieniem produkcyjnym

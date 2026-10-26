@@ -31,9 +31,9 @@ Requirements:
    - Both modes use the same lockfile. HMR works in both: Docker Desktop delivers file events on the bind mount, and `ADMIN_DEV_POLLING=1` is the fallback.
 
 4. **Same-origin API.**
-   - The admin calls the backend under `/api`. In development the Vite server proxies `/api` to the backend and strips the prefix; in production the central edge does (stage 4).
+   - The admin calls the backend under `/api`. In development the Vite server proxies `/api` to the backend and strips the prefix; in production the central edge does.
    - Browser-visible configuration (`VITE_*`) never holds secrets or API addresses.
-   - Authentication is OIDC (Keycloak) with the session kept in a BFF; the browser never holds tokens. The backend is stateless and authorisation is always enforced by the backend ([architecture](../architecture.md)).
+   - Authentication is OIDC (Keycloak) with the session kept in a BFF; the browser never holds tokens. The session cookie is `HttpOnly`, `Secure` and `SameSite`; state-changing requests need CSRF/Origin protection at the session layer (oauth2-proxy or BFF), because the store and admin domains can be same-site. The backend is stateless and authorisation is always enforced by the backend ([architecture](../architecture.md)).
 
 5. **Production image** (`infra/docker/admin`):
    - built from the repository root with an allowlist, with a frozen-lockfile install and the Vite build;
@@ -47,4 +47,4 @@ Requirements:
 - **Local mode needs Node 24.21 on macOS** (e.g. via fnm/mise reading `.node-version`) and `corepack enable pnpm`. Docker mode needs nothing on the host.
 - **Two `node_modules` copies** (host and volume) take disk space but cannot break each other.
 - **Volumes per package:** each new workspace package with its own `node_modules` needs a volume entry in `compose.override.yaml` (`apps/store` in stage 3).
-- **The `/api` prefix stripping is provisional.** It will be confirmed together with the edge routing in stage 4 and the OpenAPI contract in stage 5.
+- **The `/api` prefix stripping is provisional.** The edge routing ([ADR-0004](0004-edge-proxy-and-production-topology.md)) and the OpenAPI contract (ADR-0007) apply it.

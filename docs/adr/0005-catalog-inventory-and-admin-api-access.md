@@ -65,7 +65,7 @@ but there are no user accounts or login yet.
 
 5. **API addresses.**
    - Clients always call `/api/...` on their own origin. The proxy in front of the backend
-     (Vite and Next.js dev servers now, the central Caddy edge from stage 4) strips `/api`;
+     (the Vite dev server of the admin in development, the central Caddy edge in production) strips `/api`; the store calls the backend server-side only;
      Symfony routes have no prefix.
    - The contract is [`docs/api/openapi.yaml`](../api/openapi.yaml): `servers: [{url: /api}]` plus prefix-less paths,
      so the documented public address is the server URL plus the path.
