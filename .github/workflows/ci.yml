@@ -28,7 +28,9 @@ jobs:
     name: Quality gates (make check)
     if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # Bootstrap (with Keycloak), make check and the second, dev-check stack of
+    # make stack-check-dev: about 10 minutes, so 30 leaves room for a cold cache.
+    timeout-minutes: 30
     steps:
       - name: Check out the code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -36,8 +38,9 @@ jobs:
           persist-credentials: false
 
       # Exactly the fresh-clone setup documented in README: build the dev images,
-      # install the pnpm workspace into its volumes, start PostgreSQL, the backend
-      # and the admin/store dev servers, install Composer dependencies, run migrations.
+      # install the pnpm workspace into its volumes, start PostgreSQL (with the Keycloak
+      # database), the backend, the admin/store dev servers, Keycloak and the Redis
+      # session store, install Composer dependencies, run migrations.
       - name: Bootstrap the development environment
         run: make bootstrap
 
@@ -46,6 +49,12 @@ jobs:
       # Admin and store: ESLint, TypeScript type check, Vitest and the production build.
       - name: Run all quality gates
         run: make check
+
+      # Keycloak (realms, clients, PKCE, logins with the dev seed users), Redis (ACL,
+      # noeviction, persistence), port exposure and the apps without Keycloak/Redis,
+      # in a separate Compose project (ecommerce-dev-check) next to the one above.
+      - name: Check the development infrastructure
+        run: make stack-check-dev
 
       - name: Show container logs on failure
         if: failure()
