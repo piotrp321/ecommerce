@@ -22,7 +22,7 @@ services:
       DATABASE_NAME: ${POSTGRES_DB:-app}
       DATABASE_USER: ${POSTGRES_USER:-app}
       DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-!ChangeMe!}
-      DATABASE_SERVER_VERSION: ${POSTGRES_VERSION:-18.4}
+      DATABASE_SERVER_VERSION: ${POSTGRES_VERSION:-18.6}
     volumes:
       - caddy_data:/data
       - caddy_config:/config
@@ -45,7 +45,7 @@ services:
     restart: unless-stopped
 
   database:
-    image: postgres:${POSTGRES_VERSION:-18.4}-alpine
+    image: postgres:${POSTGRES_VERSION:-18.6}-alpine
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-app}
