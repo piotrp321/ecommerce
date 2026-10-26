@@ -42,8 +42,9 @@ esac
 config=$(mktemp)
 trap 'rm -f "$config"' EXIT
 kcadm() { /opt/keycloak/bin/kcadm.sh "$@" --config "$config"; }
-kcadm config credentials --server http://localhost:8080 --realm master \
-	--user "$KC_BOOTSTRAP_ADMIN_USERNAME" --password "$KC_BOOTSTRAP_ADMIN_PASSWORD" 2>/dev/null
+# Password through KC_CLI_PASSWORD, not on the kcadm command line.
+KC_CLI_PASSWORD="$KC_BOOTSTRAP_ADMIN_PASSWORD" kcadm config credentials --server http://localhost:8080 --realm master \
+	--user "$KC_BOOTSTRAP_ADMIN_USERNAME" </dev/null 2>/dev/null
 
 # partial_import <realm> <label> <json>: prints whether the user was added or skipped.
 partial_import() {

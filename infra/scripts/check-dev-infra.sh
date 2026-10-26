@@ -48,7 +48,17 @@ compose() { docker compose -p "$PROJECT" "$@"; }
 make_dev() { make --no-print-directory DOCKER_COMP="$DOCKER_COMP" "$@"; }
 
 work="$(mktemp -d)"
-trap 'compose down --remove-orphans >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
+# On failure the logs of Keycloak and Redis are shown before the containers are removed.
+cleanup() {
+	local status=$?
+	if [ "$status" -ne 0 ]; then
+		echo "== Logs (keycloak, redis-session) of the failed check"
+		compose logs --no-color --tail=100 keycloak redis-session 2>&1 || true
+	fi
+	compose down --remove-orphans >/dev/null 2>&1 || true
+	rm -rf "$work"
+}
+trap cleanup EXIT
 
 failures=0
 pass() { echo "PASS  $1"; }
@@ -77,20 +87,30 @@ has() { grep -qF -- "$2" <<<"$1"; }
 # --- Helpers: Keycloak -----------------------------------------------------------------
 # Inside the network (backend container has curl): internal_get <url>
 internal_get() { compose exec -T backend curl -s --max-time 10 "$1" || true; }
-# internal_post <url>: form body from stdin (keeps secrets out of command lines)
-internal_post() { compose exec -T backend curl -s --max-time 10 --data-binary @- "$1" || true; }
+# internal_post <url> <client id> <client secret>: form body from stdin, client authenticated
+# with HTTP Basic (client_secret_basic). The curl configuration goes through stdin, so no
+# secret appears on a command line.
+internal_post() {
+	local body
+	body="$(cat)"
+	printf 'url = "%s"\nuser = "%s:%s"\ndata-binary = "%s"\nmax-time = 10\nsilent\n' "$1" "$2" "$3" "$body" \
+		| compose exec -T backend curl -K - || true
+}
 # Value of a container environment variable (never printed): container_env <service> <var>
 container_env() { compose exec -T "$1" printenv "$2"; }
-# Admin REST through kcadm, output compacted: kcadm_get <kcadm get arguments...>
-kcadm_get() {
+# kcadm in the keycloak container, logged in as the bootstrap admin (password through
+# KC_CLI_PASSWORD, not on the command line); stdin is passed on: kcadm <kcadm arguments...>
+kcadm() {
 	compose exec -T keycloak bash -c '
 		config=$(mktemp)
 		trap "rm -f $config" EXIT
-		/opt/keycloak/bin/kcadm.sh config credentials --config "$config" --server http://localhost:8080 --realm master \
-			--user "$KC_BOOTSTRAP_ADMIN_USERNAME" --password "$KC_BOOTSTRAP_ADMIN_PASSWORD" >/dev/null 2>&1
-		/opt/keycloak/bin/kcadm.sh get "$@" --config "$config"
-	' kcadm "$@" 2>/dev/null | compact || true
+		KC_CLI_PASSWORD="$KC_BOOTSTRAP_ADMIN_PASSWORD" /opt/keycloak/bin/kcadm.sh config credentials --config "$config" \
+			--server http://localhost:8080 --realm master --user "$KC_BOOTSTRAP_ADMIN_USERNAME" >/dev/null 2>&1
+		/opt/keycloak/bin/kcadm.sh "$@" --config "$config"
+	' kcadm "$@" 2>/dev/null || true
 }
+# Admin REST read, output compacted: kcadm_get <kcadm get arguments...>
+kcadm_get() { kcadm get "$@" </dev/null | compact; }
 urlencode() { local LC_ALL=C s="$1" out="" c i; for ((i = 0; i < ${#s}; i++)); do c="${s:i:1}"; case "$c" in [a-zA-Z0-9.~_-]) out+="$c" ;; *) out+="$(printf '%%%02X' "'$c")" ;; esac; done; printf '%s' "$out"; }
 b64url_decode() { local s; s="$(tr '_-' '/+' <<<"$1")"; while [ $((${#s} % 4)) -ne 0 ]; do s+="="; done; openssl base64 -d -A <<<"$s" 2>/dev/null || true; }
 jwt_payload() { b64url_decode "$(cut -d. -f2 <<<"$1")" | compact; }
@@ -110,27 +130,30 @@ code_from() { sed -n 's/.*[?&]code=\([^&]*\).*/\1/p' <<<"$1"; }
 
 # Browser login with PKCE S256 (authorization code flow through the public URL).
 # login <realm> <client> <redirect_uri> <username> <password> [totp secret]
-# Sets: LOGIN_CODE, LOGIN_VERIFIER, LOGIN_OTP_ASKED (1 when the OTP form was shown).
+# Sets: LOGIN_CODE, LOGIN_VERIFIER, LOGIN_OTP_ASKED (1 when the OTP form was shown),
+# LOGIN_LOCATION (last redirect). Form bodies go through stdin (no password on a command line).
 login() {
 	local realm="$1" client="$2" redirect="$3" user="$4" password="$5" otp_secret="${6:-}"
 	local jar="$work/cookies-$realm" challenge page action location
 	rm -f "$jar"
-	LOGIN_CODE="" LOGIN_OTP_ASKED=0
+	LOGIN_CODE="" LOGIN_OTP_ASKED=0 LOGIN_LOCATION=""
 	LOGIN_VERIFIER="$(openssl rand -hex 32)"
 	challenge="$(printf '%s' "$LOGIN_VERIFIER" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')"
 	page="$(curl -s -c "$jar" -b "$jar" "${KC}/realms/${realm}/protocol/openid-connect/auth?client_id=${client}&response_type=code&scope=openid&state=check&nonce=check&redirect_uri=$(urlenc "$redirect")&code_challenge=${challenge}&code_challenge_method=S256" || true)"
 	action="$(form_action "$page")"
 	[ -n "$action" ] || return 0
-	curl -s -c "$jar" -b "$jar" -D "$work/headers" -o "$work/body" \
-		--data-urlencode "username=${user}" --data-urlencode "password=${password}" "$action" || true
+	printf 'username=%s&password=%s' "$(urlenc "$user")" "$(urlenc "$password")" \
+		| curl -s -c "$jar" -b "$jar" -D "$work/headers" -o "$work/body" --data-binary @- "$action" || true
 	location="$(location_of "$work/headers")"
 	if [ -z "$location" ] && grep -q 'name="otp"' "$work/body"; then
 		LOGIN_OTP_ASKED=1
 		[ -n "$otp_secret" ] || return 0
 		action="$(form_action "$(cat "$work/body")")"
-		curl -s -c "$jar" -b "$jar" -D "$work/headers" -o "$work/body" --data-urlencode "otp=$(totp "$otp_secret")" "$action" || true
+		printf 'otp=%s' "$(totp "$otp_secret")" \
+			| curl -s -c "$jar" -b "$jar" -D "$work/headers" -o "$work/body" --data-binary @- "$action" || true
 		location="$(location_of "$work/headers")"
 	fi
+	LOGIN_LOCATION="$location"
 	LOGIN_CODE="$(code_from "$location")"
 }
 urlenc() { urlencode "$1"; }
@@ -141,12 +164,15 @@ sso_code() {
 		"${KC}/realms/${realm}/protocol/openid-connect/auth?client_id=${client}&response_type=code&scope=openid&state=check&redirect_uri=$(urlenc "$redirect")&code_challenge=${challenge}&code_challenge_method=S256" || true
 	code_from "$(location_of "$work/headers")"
 }
-# Code exchange at the internal token endpoint: exchange <realm> <client> <secret> <redirect> <code> [verifier]
+# Code exchange at the internal token endpoint (client_secret_basic):
+# exchange <realm> <client> <secret> <redirect> <code> [verifier]
 exchange() {
-	local body="grant_type=authorization_code&client_id=$2&client_secret=$(urlenc "$3")&redirect_uri=$(urlenc "$4")&code=$5"
+	local body="grant_type=authorization_code&redirect_uri=$(urlenc "$4")&code=$5"
 	[ -z "${6:-}" ] || body+="&code_verifier=$6"
-	printf '%s' "$body" | internal_post "${KC_INTERNAL}/realms/$1/protocol/openid-connect/token" | compact
+	printf '%s' "$body" | internal_post "${KC_INTERNAL}/realms/$1/protocol/openid-connect/token" "$2" "$3" | compact
 }
+# Error code of a JSON error response (no other field is ever printed): error_of <json>
+error_of() { json_string error "$1"; }
 # Error code of an authorization request: auth_error <realm> <client> <redirect> <extra query>
 auth_error() {
 	curl -s -D "$work/headers" -o /dev/null "${KC}/realms/$1/protocol/openid-connect/auth?client_id=$2&response_type=code&scope=openid&state=check&redirect_uri=$(urlenc "$3")$4" || true
@@ -180,12 +206,24 @@ backend_health() { curl -sk --max-time 10 "https://localhost:${HTTPS_PORT}/healt
 store_home_ok() { curl -s --max-time 120 "http://localhost:${STORE_PORT}/" | grep -q '<h1>Sklep</h1>'; }
 
 echo "== Development stack (project ${PROJECT}, Keycloak on ${KEYCLOAK_PORT}, Redis on ${REDIS_PORT})"
+# Realms are imported once: with volumes of an earlier run, Keycloak keeps the realms of that
+# import (changes in infra/keycloak/realms/*.json are not checked) and the database keeps its
+# data. Nothing is removed; a fresh check needs a new DEV_CHECK_PROJECT.
+existing="$(docker volume ls -q --filter "label=com.docker.compose.project=${PROJECT}" | tr '\n' ' ')"
+if [ -n "$existing" ]; then
+	echo "WARN  project ${PROJECT} already has volumes (${existing% }): realms come from an earlier import,"
+	echo "WARN  so changes in infra/keycloak/realms/*.json are not checked. Use a new DEV_CHECK_PROJECT for a fresh run."
+fi
+# Images from the working tree (cached layers), so the realm files checked are the current ones.
+step "dev images built from the working tree" compose build
 step "pnpm workspace installed into the project volumes" make_dev pnpm-install
 step "make up: database, keycloak-db.sh, all services healthy" make_dev up
 step "backend dependencies installed" make_dev backend-install
 step "application migrations run" make_dev backend-migrate
+step "application test database prepared (make backend-db-test)" make_dev backend-db-test
 app_before="$(app_fingerprint)"
 [ -n "$app_before" ] && pass "application tables present: ${app_before}" || fail "application tables missing"
+# Second run: also covers databases created after the first one (the test database).
 step "keycloak-db.sh runs again without errors (idempotent)" env DOCKER_COMP="$DOCKER_COMP" ./infra/scripts/keycloak-db.sh
 step "keycloak-dev-seed runs (first run in this project creates or skips the users)" make_dev keycloak-dev-seed
 make_dev keycloak-dev-seed >"$work/seed2.log" 2>&1 && [ "$(grep -c 'already exists (skipped)' "$work/seed2.log")" = "2" ] \
@@ -196,9 +234,14 @@ done
 
 echo "== Keycloak database"
 has "$(as_keycloak keycloak)" "1" && pass "role keycloak connects to its database" || fail "role keycloak cannot connect to database keycloak"
+other_dbs="$(compose exec -T database sh -c 'psql -X -At --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" -c "SELECT datname FROM pg_database WHERE NOT datistemplate AND datname <> '"'"'keycloak'"'"' ORDER BY 1"' | tr '\n' ' ' || true)"
+denied=1
+for db in $other_dbs; do has "$(as_keycloak "$db")" "permission denied for database" || denied=0; done
 app_db="$(container_env database POSTGRES_DB)"
-has "$(as_keycloak "$app_db")" "permission denied for database" && pass "role keycloak cannot connect to the application database (${app_db})" \
-	|| fail "role keycloak can connect to the application database"
+has " $other_dbs" " ${app_db} " && has " $other_dbs" " ${app_db}_test " && has " $other_dbs" " postgres " && [ "$denied" = 1 ] \
+	&& pass "role keycloak cannot connect to any other database (${other_dbs% })" || fail "role keycloak connects to another database (${other_dbs% })"
+has "$(compose exec -T database sh -c 'pg_isready -d "$POSTGRES_DB" -U "$POSTGRES_USER"' 2>&1 || true)" "accepting connections" \
+	&& pass "database health check (pg_isready) unaffected" || fail "pg_isready after the CONNECT revocation"
 super="$(compose exec -T database sh -c 'psql -X -At --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" -c "SELECT rolsuper OR rolcreatedb OR rolcreaterole FROM pg_roles WHERE rolname = '"'"'keycloak'"'"'"' || true)"
 [ "$super" = "f" ] && pass "role keycloak has no superuser, createdb or createrole privileges" || fail "role keycloak privileges: ${super}"
 
@@ -215,7 +258,7 @@ for realm in store admin; do
 		&& pass "${realm}: discovery inside the network: public issuer, jwks_uri and token_endpoint on ${KC_INTERNAL}" \
 		|| fail "${realm}: internal discovery (issuer '$(json_string issuer "$internal")', jwks '${jwks_uri}', token '${token_endpoint}')"
 	jwks="$(internal_get "$jwks_uri" | compact)"
-	has "$jwks" '"alg":"RS256"' && has "$jwks" '"use":"sig"' && pass "${realm}: JWKS reachable inside the network (RS256 signing key)" || fail "${realm}: JWKS ${jwks:0:120}"
+	has "$jwks" '"alg":"RS256"' && has "$jwks" '"use":"sig"' && pass "${realm}: JWKS reachable inside the network (RS256 signing key)" || fail "${realm}: JWKS without an RS256 signing key"
 	[ "$(curl -s -o /dev/null -w '%{http_code}' "${KC}/realms/${realm}/account" || true)" = "404" ] \
 		&& pass "${realm}: account console disabled (/realms/${realm}/account -> 404)" || fail "${realm}: account console reachable"
 done
@@ -237,8 +280,16 @@ expect_all "store realm: access token 5 min, SSO idle 30 min / max 12 h, refresh
 expect_all "admin realm: no registration, no forgot password, password length(14), SSO idle 15 min / max 8 h, refresh token rotation" "$admin_realm" \
 	'"registrationAllowed":false' '"resetPasswordAllowed":false' '"passwordPolicy":"length(14)"' \
 	'"ssoSessionIdleTimeout":900' '"ssoSessionMaxLifespan":28800' '"revokeRefreshToken":true' '"refreshTokenMaxReuse":0'
+expect_all "admin realm: brute force protection with temporary lockout" "$admin_realm" \
+	'"bruteForceProtected":true' '"permanentLockout":false' '"failureFactor":5' '"maxFailureWaitSeconds":900'
 otp_action="$(kcadm_get authentication/required-actions/CONFIGURE_TOTP -r admin)"
 expect_all "admin realm: Configure OTP is an enabled default required action" "$otp_action" '"enabled":true' '"defaultAction":true'
+# OTP Form REQUIRED in the browser flow (not the conditional OTP of the default flow).
+has "$admin_realm" '"browserFlow":"adminbrowser"' \
+	&& grep -oE '[{][^{}]*"providerId":"auth-otp-form"[^{}]*[}]' <<<"$(kcadm_get 'authentication/flows/admin%20browser/executions' -r admin)" | grep -q '"requirement":"REQUIRED"' \
+	&& pass "admin realm: browser flow 'admin browser' with OTP Form REQUIRED" || fail "admin realm: browser flow without a required OTP Form"
+has "$(kcadm_get authentication/required-actions/delete_credential -r admin)" '"enabled":false' \
+	&& pass "admin realm: delete credential action disabled" || fail "admin realm: delete credential action enabled"
 for realm in store admin; do
 	clients="$(kcadm_get clients -r "$realm" --fields clientId,enabled)"
 	has "$clients" '{"clientId":"account","enabled":false}' && ! has "$clients" '"account-console"' \
@@ -268,14 +319,17 @@ has "$(kcadm_get "clients/${api_id}/roles" -r admin --fields name)" '{"name":"ad
 echo "== Grants and PKCE (store-bff, admin-bff)"
 store_secret="$(container_env keycloak STORE_OIDC_CLIENT_SECRET)"
 admin_secret="$(container_env keycloak ADMIN_OIDC_CLIENT_SECRET)"
-grant() { printf '%s' "$2" | internal_post "${KC_INTERNAL}/realms/$1/protocol/openid-connect/token" | compact; }
+# grant <realm> <client> <secret> <form body>
+grant() { printf '%s' "$4" | internal_post "${KC_INTERNAL}/realms/$1/protocol/openid-connect/token" "$2" "$3" | compact; }
 for spec in "store|store-bff|${store_secret}|${KEYCLOAK_DEV_CUSTOMER_EMAIL}|${KEYCLOAK_DEV_CUSTOMER_PASSWORD}" \
 	"admin|admin-bff|${admin_secret}|${KEYCLOAK_DEV_ADMIN_USERNAME}|${KEYCLOAK_DEV_ADMIN_PASSWORD}"; do
 	IFS='|' read -r realm client secret user password <<<"$spec"
-	res="$(grant "$realm" "grant_type=password&client_id=${client}&client_secret=$(urlenc "$secret")&username=$(urlenc "$user")&password=$(urlenc "$password")")"
-	has "$res" '"error":"unauthorized_client"' && pass "${client}: password grant (direct access) rejected (unauthorized_client)" || fail "${client}: password grant ${res:0:120}"
-	res="$(grant "$realm" "grant_type=client_credentials&client_id=${client}&client_secret=$(urlenc "$secret")")"
-	has "$res" '"error":"unauthorized_client"' && pass "${client}: token endpoint inside the network answers; client credentials grant rejected" || fail "${client}: client credentials ${res:0:120}"
+	res="$(grant "$realm" "$client" "$secret" "grant_type=password&username=$(urlenc "$user")&password=$(urlenc "$password")")"
+	[ "$(error_of "$res")" = "unauthorized_client" ] && pass "${client}: password grant (direct access) rejected (unauthorized_client)" || fail "${client}: password grant (error '$(error_of "$res")')"
+	res="$(grant "$realm" "$client" "$secret" "grant_type=client_credentials")"
+	[ "$(error_of "$res")" = "unauthorized_client" ] \
+		&& pass "${client}: token endpoint inside the network authenticates the client (client_secret_basic); client credentials grant rejected" \
+		|| fail "${client}: client credentials (error '$(error_of "$res")')"
 done
 for spec in "store|store-bff|${STORE_CALLBACK}" "admin|admin-bff|${ADMIN_CALLBACK}"; do
 	IFS='|' read -r realm client redirect <<<"$spec"
@@ -293,13 +347,13 @@ tokens="$(exchange store store-bff "$store_secret" "$STORE_CALLBACK" "$LOGIN_COD
 claims="$(jwt_payload "$(json_string access_token "$tokens")")"
 expect_all "store: access token from the internal token endpoint has the public issuer, aud store-api, azp store-bff, typ, e-mail claims" "$claims" \
 	"\"iss\":\"${KC}/realms/store\"" '"azp":"store-bff"' '"typ":"Bearer"' '"email_verified":true' "\"email\":\"${KEYCLOAK_DEV_CUSTOMER_EMAIL}\"" '"sub":"'
-grep -qE '"aud":("store-api"|\[[^]]*"store-api")' <<<"$claims" && pass "store: aud contains store-api" || fail "store: aud ${claims:0:200}"
+grep -qE '"aud":("store-api"|\[[^]]*"store-api")' <<<"$claims" && pass "store: aud contains store-api" || fail "store: aud without store-api (token error '$(error_of "$tokens")')"
 exp="$(json_number exp "$claims")" iat="$(json_number iat "$claims")"
 [ -n "$exp" ] && [ -n "$iat" ] && [ $((exp - iat)) -eq 300 ] && pass "store: access token lifetime 300 s" || fail "store: access token lifetime (exp '${exp}', iat '${iat}')"
 challenge="$(printf '%s' "$(openssl rand -hex 32)" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')"
 code="$(sso_code store store-bff "$STORE_CALLBACK" "$challenge")"
 res="$(exchange store store-bff "$store_secret" "$STORE_CALLBACK" "$code")"
-[ -n "$code" ] && has "$res" '"error":"invalid_grant"' && pass "store: code exchange without code_verifier rejected (invalid_grant)" || fail "store: exchange without verifier ${res:0:120}"
+[ -n "$code" ] && [ "$(error_of "$res")" = "invalid_grant" ] && pass "store: code exchange without code_verifier rejected (invalid_grant)" || fail "store: exchange without verifier (error '$(error_of "$res")')"
 
 login admin admin-bff "$ADMIN_CALLBACK" "$KEYCLOAK_DEV_ADMIN_USERNAME" "$KEYCLOAK_DEV_ADMIN_PASSWORD"
 [ "$LOGIN_OTP_ASKED" = 1 ] && [ -z "$LOGIN_CODE" ] && pass "admin: password alone is not enough, the browser flow asks for OTP" || fail "admin: OTP not required (otp form ${LOGIN_OTP_ASKED})"
@@ -309,7 +363,34 @@ tokens="$(exchange admin admin-bff "$admin_secret" "$ADMIN_CALLBACK" "$LOGIN_COD
 claims="$(jwt_payload "$(json_string access_token "$tokens")")"
 expect_all "admin: access token has the public issuer, azp admin-bff, resource_access.admin-api.roles [admin]" "$claims" \
 	"\"iss\":\"${KC}/realms/admin\"" '"azp":"admin-bff"' '"typ":"Bearer"' '"resource_access":{"admin-api":{"roles":["admin"]}}' '"sub":"'
-grep -qE '"aud":("admin-api"|\[[^]]*"admin-api")' <<<"$claims" && pass "admin: aud contains admin-api" || fail "admin: aud ${claims:0:200}"
+grep -qE '"aud":("admin-api"|\[[^]]*"admin-api")' <<<"$claims" && pass "admin: aud contains admin-api" || fail "admin: aud without admin-api (token error '$(error_of "$tokens")')"
+# The logged-in admin asks to delete the OTP credential (application initiated action);
+# the confirmation is accepted if Keycloak shows it. The credential must stay.
+admin_id="$(json_string id "$(kcadm_get users -r admin -q "username=${KEYCLOAK_DEV_ADMIN_USERNAME}" --fields id)")"
+otp_id="$(grep -o '"id":"[0-9a-f-]*","type":"otp"' <<<"$(kcadm_get "users/${admin_id}/credentials" -r admin)" | cut -d'"' -f4 || true)"
+curl -s -c "$work/cookies-admin" -b "$work/cookies-admin" -D "$work/headers" -o "$work/body" \
+	"${KC}/realms/admin/protocol/openid-connect/auth?client_id=admin-bff&response_type=code&scope=openid&redirect_uri=$(urlenc "$ADMIN_CALLBACK")&code_challenge=${challenge}&code_challenge_method=S256&kc_action=delete_credential:${otp_id}" || true
+for _ in 1 2 3; do
+	location="$(location_of "$work/headers")"
+	case "$location" in "${KC}"/*) curl -s -c "$work/cookies-admin" -b "$work/cookies-admin" -D "$work/headers" -o "$work/body" "$location" || true ;; *) break ;; esac
+done
+if grep -q 'name="accept"' "$work/body"; then
+	printf 'accept=accept' | curl -s -c "$work/cookies-admin" -b "$work/cookies-admin" -D "$work/headers" -o "$work/body" --data-binary @- "$(form_action "$(cat "$work/body")")" || true
+fi
+[ -n "$otp_id" ] && has "$(kcadm_get "users/${admin_id}/credentials" -r admin)" "\"id\":\"${otp_id}\"" \
+	&& pass "admin: kc_action=delete_credential does not remove the OTP credential" || fail "admin: OTP credential removed by delete_credential (id '${otp_id}')"
+# A user created through the admin REST API without OTP and with "requiredActions": [] must
+# configure OTP at the first login (OTP Form REQUIRED), not get a code.
+no_otp_password="Np-$(openssl rand -hex 12)"
+kcadm create partialImport -r admin -f - >/dev/null <<JSON
+{"ifResourceExists": "OVERWRITE", "users": [{"username": "dev-check-no-otp", "email": "dev-check-no-otp@example.test",
+  "emailVerified": true, "enabled": true, "firstName": "Check", "lastName": "NoOtp", "requiredActions": [],
+  "credentials": [{"type": "password", "value": "${no_otp_password}", "temporary": false}]}]}
+JSON
+login admin admin-bff "$ADMIN_CALLBACK" dev-check-no-otp "$no_otp_password"
+has "$LOGIN_LOCATION" "execution=CONFIGURE_TOTP" && [ -z "$LOGIN_CODE" ] \
+	&& pass "admin: user without OTP (requiredActions []) must configure OTP at login, no code issued" \
+	|| fail "admin: user without OTP got '${LOGIN_LOCATION%%\?*}' (code issued: $([ -n "$LOGIN_CODE" ] && echo yes || echo no))"
 
 echo "== Redis (store sessions)"
 has "$(redis_as none PING)" "NOAUTH" && pass "redis: commands without authentication are refused (NOAUTH)" || fail "redis: unauthenticated PING"
@@ -324,7 +405,38 @@ marker="persist-$(openssl rand -hex 8)"
 has "$(redis_as store SET other:key 1)" "NOPERM" && has "$(redis_as store GET other:key)" "NOPERM" \
 	&& pass "redis: user store cannot use keys outside store:*" || fail "redis: store user outside store:*"
 has "$(redis_as store FLUSHALL)" "NOPERM" && has "$(redis_as store CONFIG GET maxmemory)" "NOPERM" && has "$(redis_as store KEYS '*')" "NOPERM" \
-	&& pass "redis: user store cannot FLUSHALL, CONFIG or KEYS" || fail "redis: store user has admin commands"
+	&& has "$(redis_as store CLIENT LIST)" "NOPERM" && has "$(redis_as store ACL WHOAMI)" "NOPERM" \
+	&& pass "redis: user store cannot FLUSHALL, CONFIG, KEYS, CLIENT LIST or ACL" || fail "redis: store user has admin commands"
+multi="$(printf 'MULTI\nSET store:dev-check:tx 1\nPEXPIRE store:dev-check:tx 60000\nEXEC\n' | compose exec -T redis-session sh -c 'REDISCLI_AUTH="$REDIS_SESSION_PASSWORD" exec redis-cli --no-auth-warning --user store' 2>&1 || true)"
+has "$multi" "QUEUED" && ! has "$multi" "ERR" && ! has "$multi" "NOPERM" && pass "redis: user store runs MULTI/EXEC" || fail "redis: MULTI/EXEC for store"
+[ "$(redis_as store EVAL "return redis.call('GET', KEYS[1])" 1 store:dev-check:tx)" = "1" ] && pass "redis: user store runs Lua scripts (EVAL) on store:* keys" || fail "redis: EVAL for store"
+[ "$(redis_as store CLIENT SETINFO LIB-NAME dev-check)" = "OK" ] && pass "redis: user store may CLIENT SETINFO (node-redis handshake)" || fail "redis: CLIENT SETINFO for store"
+redis_as store DEL store:dev-check:tx >/dev/null
+
+echo "== Store configuration (STORE_AUTH_MODE=oidc, values never printed)"
+missing=""
+for var in STORE_ENVIRONMENT STORE_AUTH_MODE STORE_PUBLIC_URL STORE_OIDC_ISSUER STORE_OIDC_INTERNAL_URL \
+	STORE_OIDC_CLIENT_ID STORE_OIDC_CLIENT_SECRET STORE_REDIS_URL STORE_SESSION_ENC_KEYS STORE_BACKEND_URL; do
+	[ -n "$(container_env store "$var" 2>/dev/null || true)" ] || missing+=" ${var}"
+done
+[ -z "$missing" ] && pass "store: all auth and session variables set and non-empty" || fail "store: empty or missing:${missing}"
+[ "$(container_env store STORE_OIDC_ISSUER)" = "${KC}/realms/store" ] && [ "$(container_env store STORE_OIDC_INTERNAL_URL)" = "${KC_INTERNAL}/realms/store" ] \
+	&& [ "$(container_env store STORE_PUBLIC_URL)" = "$STORE_PUBLIC_URL" ] && [ "$(container_env store STORE_OIDC_CLIENT_ID)" = "store-bff" ] \
+	&& [ "$(container_env store STORE_AUTH_MODE)" = "oidc" ] && [ "$(container_env store STORE_ENVIRONMENT)" = "development" ] \
+	&& pass "store: issuer equals the token iss, internal URL ${KC_INTERNAL}/realms/store, public URL, client id, oidc mode" || fail "store: OIDC URLs or mode"
+[ "$(container_env store STORE_OIDC_CLIENT_SECRET)" = "$store_secret" ] && pass "store: client secret equals the store-bff secret imported into Keycloak" || fail "store: client secret differs from Keycloak"
+keys_ok=1
+IFS=',' read -r -a enc_keys <<<"$(container_env store STORE_SESSION_ENC_KEYS)"
+for entry in "${enc_keys[@]}"; do
+	[ -n "${entry%%:*}" ] && [ "${entry%%:*}" != "$entry" ] && [ "$(openssl base64 -d -A <<<"${entry#*:}" 2>/dev/null | wc -c | tr -d ' ')" = "32" ] || keys_ok=0
+done
+[ "${#enc_keys[@]}" -ge 1 ] && [ "$keys_ok" = 1 ] && pass "store: STORE_SESSION_ENC_KEYS is kid:base64 of 32 bytes (${#enc_keys[@]} key(s))" || fail "store: STORE_SESSION_ENC_KEYS format"
+# The store's Redis URL authenticates as user store (same password as the Redis ACL).
+STORE_REDIS_URL="$(container_env store STORE_REDIS_URL)"
+export STORE_REDIS_URL
+[ "$(compose exec -T -e STORE_REDIS_URL redis-session sh -c 'exec redis-cli --no-auth-warning -u "$STORE_REDIS_URL" PING' 2>&1 || true)" = "PONG" ] \
+	&& pass "store: STORE_REDIS_URL authenticates to redis-session as user store" || fail "store: STORE_REDIS_URL does not authenticate"
+unset STORE_REDIS_URL
 
 echo "== Exposure"
 ports="$(compose ps --format '{{.Service}} {{.Ports}}')"
