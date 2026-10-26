@@ -39,7 +39,7 @@ Gdy coś nie działa, najpierw czytaj `var/log/`, logi kontenera (`make logs`) i
 Modularny monolit, DDD + architektura heksagonalna (Clean Architecture). Reguły wymusza Deptrac (`deptrac.yaml`, `make backend-arch`).
 
 - Każda klasa w `src/` należy do `App\<Moduł>\<Warstwa>\…`:
-  - moduły: `Catalog`, `Inventory`, `Cart`, `Ordering`, `Payments` oraz `Shared`,
+  - moduły: `Catalog`, `Inventory`, `Cart`, `Ordering`, `Payments`, `Customers`, `Backoffice` oraz `Shared`,
   - warstwy: `Domain`, `Application`, `Infrastructure`.
   Wyjątek: `App\Kernel`. Klasa poza tą strukturą kończy `make backend-arch` błędem.
 - Kierunek zależności wewnątrz modułu: `Infrastructure` → `Application` → `Domain`.
@@ -79,7 +79,7 @@ Modularny monolit, DDD + architektura heksagonalna (Clean Architecture). Reguły
 
 ## Struktura
 
-- `src/<Moduł>/<Warstwa>/`: kod aplikacji; moduły `Catalog`, `Inventory` i `Shared` (`Money`, `VatRate`, problem details, bezpieczeństwo API, `/health`)
+- `src/<Moduł>/<Warstwa>/`: kod aplikacji; moduły `Catalog`, `Inventory`, `Customers` (klienci sklepu), `Backoffice` (administratorzy) i `Shared` (`Money`, `VatRate`, `ExternalIdentity`, problem details, bezpieczeństwo API, `/health`)
 - mapowania Doctrine: `src/<Moduł>/Infrastructure/Persistence/Doctrine/Mapping/*.orm.xml`, typy DBAL dla value objects z `#[AsDbalType]`
 - `tests/Support/Contract/`: walidacja odpowiedzi względem kontraktu (kontrakt montowany w kontenerze dev jako `/contract`)
 - `tests/Unit/` (bez kernela), `tests/Integration/` (`KernelTestCase` z bazą: repozytoria, zapytania, schemat), `tests/Functional/` (`WebTestCase`, HTTP): struktura katalogów odzwierciedla `src/`; `tests/Support/`: wspólne klasy testów (czyszczenie bazy, fixtures, repozytoria w pamięci)
