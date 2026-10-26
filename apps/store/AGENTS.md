@@ -72,10 +72,12 @@ Sklep jest poufnym klientem OIDC `store-bff` Keycloaka (realm `store`, authoriza
 
 ## Bezpieczeństwo
 
-- Autoryzacja zawsze na backendzie (access token jako Bearer, audience `store-api`); sklep jej nie duplikuje.
-- Żadnych tokenów w HTML, JS, `localStorage`/`sessionStorage` ani ciasteczkach; strony dostają tylko `SessionView`.
+Architektura tożsamości: [docs/architecture.md](../../docs/architecture.md).
+
+- Autoryzacja zawsze na backendzie, który jest bezstanowy i sam waliduje token (Bearer, audience `store-api`); sklep jej nie duplikuje.
+- Tokeny tylko po stronie serwera Next.js (BFF); w przeglądarce wyłącznie identyfikator sesji w ciasteczku `HttpOnly`, `Secure`, `SameSite=Lax`. Żadnych tokenów w HTML, kodzie klienckim, `localStorage` ani `sessionStorage`; strony dostają tylko `SessionView`.
 - Danych sesji nigdy nie umieszczaj w `use cache`, ISR ani innym współdzielonym cache (pilnuje tego test).
-- Server Actions i formularze zmieniające stan wymagają `assertSameOrigin()` (oprócz kontroli Next.js); nowe trasy auth dodawaj tylko pod `/logowanie` i `/auth/`.
+- Server Actions i formularze zmieniające stan wymagają ochrony CSRF/Origin zgodnej z dokumentacją Next.js oraz `assertSameOrigin()`; nowe trasy auth dodawaj tylko pod `/logowanie` i `/auth/`.
 
 ## Komendy
 

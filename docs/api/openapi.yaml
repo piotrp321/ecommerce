@@ -20,8 +20,8 @@ info:
     - `/admin/...`: every operation requires the administrator bearer token;
       they include inactive products and stock quantities. The token is an
       INTERIM solution (ADR-0005) for tests and server-side calls only: it must
-      never be used in browser code. Before the admin panel uses this API it gets
-      proper login with HttpOnly session cookies and CSRF protection.
+      never be used in browser code. It is to be replaced by OIDC bearer tokens
+      from the Keycloak realm admin.
 
     **Money.** Decimal strings with exactly two fractional digits, currency always
     `PLN`. Calculated in grosze (integers): `gross = round_half_up(net × (1 + VAT))`
@@ -488,8 +488,7 @@ components:
       description: |
         INTERIM administrator token (ADR-0005), configured on the server as the
         `ADMIN_API_TOKEN` secret. Tests and server-side calls only, never in a
-        browser. Replaced by admin login with HttpOnly session cookies and CSRF
-        protection before the admin panel uses the API.
+        browser. To be replaced by OIDC bearer tokens from the Keycloak realm admin.
 
   parameters:
     Id:
@@ -737,7 +736,7 @@ components:
     Stock:
       type: object
       description: |
-        Units on hand, held by reservations (from Milestone 4; always 0 now) and
+        Units on hand, held by reservations (from Milestone 5; always 0 now) and
         available for sale: available = onHand - reserved.
       required: [onHand, reserved, available]
       properties:

@@ -8,7 +8,7 @@
 Milestone 2 brings the first business endpoints: products and categories for the store,
 and their management for administrators.
 The specification ([01-placing-order.md](../specs/01-placing-order.md)) defines prices (R11–R14, section 3.4)
-and availability as stock minus reservations (R7), with reservations coming in Milestone 4.
+and availability as stock minus reservations (R7), with reservations coming in Milestone 5.
 Administrative operations change data, so they must not be reachable without authorisation,
 but there are no user accounts or login yet.
 
@@ -16,10 +16,10 @@ but there are no user accounts or login yet.
 
 1. **Two modules from the start.**
    - `Catalog` owns products (SKU, slug, name, description, unit net price, VAT rate, active flag, optional category) and the category tree.
-   - `Inventory` owns stock (`StockItem`: quantity on hand per product). Milestone 4 adds reservations there,
+   - `Inventory` owns stock (`StockItem`: quantity on hand per product). Milestone 5 adds reservations there,
      so the atomic reservation (R18–R20) touches one module.
    - `Shared\Domain` holds `Money` (integer grosze, PLN only), `VatRate` (23/8/5/0) and `LinePrice` (section 3.4),
-     because Ordering needs the same rules in Milestone 4.
+     because Ordering needs the same rules in Milestone 5.
 
 2. **Modules talk through ports, one Deptrac rule.**
    - Catalog declares `ProductAvailability` (Application); Inventory declares `KnownProducts` (Application)
@@ -31,7 +31,7 @@ but there are no user accounts or login yet.
      validation, serialization, security, messaging, DI…); only small value libraries
      (`symfony/uid`, `psr/clock`) are allowed there.
    - Availability of a product list is looked up once per page (`StockLevels::forProducts()`), never per product.
-   - `StockLevel` already exposes `onHand`, `reserved` and `available`; `reserved` is 0 until Milestone 4.
+   - `StockLevel` already exposes `onHand`, `reserved` and `available`; `reserved` is 0 until Milestone 5.
 
 3. **Category tree: adjacency list (`parent_id`) with recursive queries, not a nested set.**
    - A category is a root or has one parent; a product belongs to at most one category.
@@ -65,7 +65,7 @@ but there are no user accounts or login yet.
 
 5. **API addresses.**
    - Clients always call `/api/...` on their own origin. The proxy in front of the backend
-     (Vite and Next.js dev servers now, the central Caddy edge from stage 4) strips `/api`;
+     (the Vite dev server of the admin in development, the central Caddy edge in production) strips `/api`; the store calls the backend server-side only;
      Symfony routes have no prefix.
    - The contract is [`docs/api/openapi.yaml`](../api/openapi.yaml): `servers: [{url: /api}]` plus prefix-less paths,
      so the documented public address is the server URL plus the path.
@@ -88,12 +88,12 @@ but there are no user accounts or login yet.
 
 ## Consequences
 
-- **Before the admin panel uses the API**, the token is replaced by admin accounts with login,
-  HttpOnly session cookies and CSRF protection for state-changing requests (as foreseen in ADR-0002).
+- **Before the admin panel uses the API**, the token is replaced by OIDC (Keycloak, realm `admin`)
+  ([architecture](../architecture.md), ADR-0002).
   Controllers do not depend on the authentication method, so only the firewall configuration changes.
 - One token means one shared identity: no per-person audit trail and rotation means redeploying the secret.
   Acceptable only while the admin API has no browser clients.
 - In production the admin API is disabled until `ADMIN_API_TOKEN` is provided to the backend container.
-- `docs/api/openapi.yaml` is maintained by hand for now; contract tests and `packages/sdk` follow in stage 5.
-- Milestone 4 adds reservations in Inventory and changes only the `reserved` part of `StockLevels`;
+- `docs/api/openapi.yaml` is maintained by hand for now; contract tests exist (ADR-0007); `packages/sdk` follows in stage 5.
+- Milestone 5 adds reservations in Inventory and changes only the `reserved` part of `StockLevels`;
   Catalog and the API already carry `reserved` and `available`.
