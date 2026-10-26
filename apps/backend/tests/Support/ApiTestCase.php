@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace App\Tests\Support;
 
 use App\Tests\Support\Contract\OpenApiContract;
+use App\Tests\Support\Security\FakeOidcProvider;
+use App\Tests\Support\Security\TestTokens;
+use Doctrine\DBAL\Connection;
+use Psr\Cache\CacheItemPoolInterface;
 use Symfony\Bundle\FrameworkBundle\KernelBrowser;
 use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
 
@@ -12,6 +16,8 @@ use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
  * HTTP tests of the JSON API on an emptied test database.
  * Every response obtained through request() is validated against the API contract
  * (docs/api/openapi.yaml): documented status, Content-Type and JSON Schema.
+ * Callers authenticate with access tokens of the fake identity provider
+ * (tests/Support/Security): admin: true or customer() / admin().
  */
 abstract class ApiTestCase extends WebTestCase
 {
@@ -22,21 +28,41 @@ abstract class ApiTestCase extends WebTestCase
         parent::setUp();
         $this->client = static::createClient();
         Database::reset(static::getContainer()->get('doctrine.dbal.default_connection'));
+        // The keys of the fake identity provider change on every test run.
+        self::oidcCache()->clear();
+    }
+
+    /**
+     * The OIDC discovery cache (filesystem, as in production): it survives
+     * kernel reboots, like across requests of a real server.
+     */
+    protected static function oidcCache(): CacheItemPoolInterface
+    {
+        return static::getContainer()->get('cache.oidc');
+    }
+
+    protected function tearDown(): void
+    {
+        FakeOidcProvider::reset();
+        parent::tearDown();
     }
 
     /**
      * @param array<mixed>|null $body
+     * @param bool              $admin with a valid administrator token (TestTokens::admin())
+     * @param string|null       $token with this bearer token
      *
      * @return array<mixed>
      */
-    protected function request(string $method, string $uri, ?array $body = null, bool $admin = false): array
+    protected function request(string $method, string $uri, ?array $body = null, bool $admin = false, ?string $token = null): array
     {
         $server = ['HTTP_ACCEPT' => 'application/json'];
         if (null !== $body) {
             $server['CONTENT_TYPE'] = 'application/json';
         }
-        if ($admin) {
-            $server['HTTP_AUTHORIZATION'] = 'Bearer '.self::adminToken();
+        $token ??= $admin ? TestTokens::admin() : null;
+        if (null !== $token) {
+            $server['HTTP_AUTHORIZATION'] = 'Bearer '.$token;
         }
         $this->client->request($method, $uri, server: $server, content: null === $body ? null : json_encode($body, \JSON_THROW_ON_ERROR));
         $this->assertResponseMatchesContract($method, $uri);
@@ -52,6 +78,24 @@ abstract class ApiTestCase extends WebTestCase
     protected function admin(string $method, string $uri, ?array $body = null): array
     {
         return $this->request($method, $uri, $body, admin: true);
+    }
+
+    /**
+     * A request of the signed-in customer (TestTokens::customer() with these claims).
+     *
+     * @param array<string, mixed> $claims
+     * @param array<mixed>|null    $body
+     *
+     * @return array<mixed>
+     */
+    protected function customer(string $method, string $uri, array $claims = [], ?array $body = null): array
+    {
+        return $this->request($method, $uri, $body, token: TestTokens::customer($claims));
+    }
+
+    protected function connection(): Connection
+    {
+        return static::getContainer()->get('doctrine.dbal.default_connection');
     }
 
     /**
@@ -120,14 +164,6 @@ abstract class ApiTestCase extends WebTestCase
             self::assertIsString($problem['detail'] ?? null);
             self::assertStringContainsString($detail, $problem['detail']);
         }
-    }
-
-    protected static function adminToken(): string
-    {
-        $token = $_SERVER['ADMIN_API_TOKEN'] ?? null;
-        \assert(\is_string($token));
-
-        return $token;
     }
 
     /**

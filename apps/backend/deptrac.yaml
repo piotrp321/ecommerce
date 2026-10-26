@@ -2,9 +2,9 @@
 # See apps/backend/AGENTS.md ("Architektura") for the rationale.
 #
 # Every class in src/ must belong to a layer: App\<Module>\<Layer>\..., where
-# Module is Catalog, Inventory, Cart, Ordering, Payments or Shared and Layer is
-# Domain, Application or Infrastructure. `make backend-arch` also fails on
-# unassigned classes.
+# Module is Catalog, Inventory, Cart, Ordering, Payments, Customers, Backoffice
+# or Shared and Layer is Domain, Application or Infrastructure.
+# `make backend-arch` also fails on unassigned classes.
 deptrac:
   paths:
     - ./src
@@ -76,6 +76,30 @@ deptrac:
       collectors:
         - type: classNameRegex
           value: '#^App\\Payments\\Infrastructure\\#'
+    - name: Customers_Domain
+      collectors:
+        - type: classNameRegex
+          value: '#^App\\Customers\\Domain\\#'
+    - name: Customers_Application
+      collectors:
+        - type: classNameRegex
+          value: '#^App\\Customers\\Application\\#'
+    - name: Customers_Infrastructure
+      collectors:
+        - type: classNameRegex
+          value: '#^App\\Customers\\Infrastructure\\#'
+    - name: Backoffice_Domain
+      collectors:
+        - type: classNameRegex
+          value: '#^App\\Backoffice\\Domain\\#'
+    - name: Backoffice_Application
+      collectors:
+        - type: classNameRegex
+          value: '#^App\\Backoffice\\Application\\#'
+    - name: Backoffice_Infrastructure
+      collectors:
+        - type: classNameRegex
+          value: '#^App\\Backoffice\\Infrastructure\\#'
     - name: Shared_Domain
       collectors:
         - type: classNameRegex
@@ -192,6 +216,36 @@ deptrac:
     Payments_Infrastructure:
       - Payments_Domain
       - Payments_Application
+      - Shared_Domain
+      - Shared_Application
+      - Shared_Infrastructure
+      - Http
+      - Persistence
+      - Framework
+    Customers_Domain:
+      - Shared_Domain
+    Customers_Application:
+      - Customers_Domain
+      - Shared_Domain
+      - Shared_Application
+    Customers_Infrastructure:
+      - Customers_Domain
+      - Customers_Application
+      - Shared_Domain
+      - Shared_Application
+      - Shared_Infrastructure
+      - Http
+      - Persistence
+      - Framework
+    Backoffice_Domain:
+      - Shared_Domain
+    Backoffice_Application:
+      - Backoffice_Domain
+      - Shared_Domain
+      - Shared_Application
+    Backoffice_Infrastructure:
+      - Backoffice_Domain
+      - Backoffice_Application
       - Shared_Domain
       - Shared_Application
       - Shared_Infrastructure

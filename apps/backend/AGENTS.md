@@ -39,7 +39,7 @@ Gdy coś nie działa, najpierw czytaj `var/log/`, logi kontenera (`make logs`) i
 Modularny monolit, DDD + architektura heksagonalna (Clean Architecture). Reguły wymusza Deptrac (`deptrac.yaml`, `make backend-arch`).
 
 - Każda klasa w `src/` należy do `App\<Moduł>\<Warstwa>\…`:
-  - moduły: `Catalog`, `Inventory`, `Cart`, `Ordering`, `Payments` oraz `Shared`,
+  - moduły: `Catalog`, `Inventory`, `Cart`, `Ordering`, `Payments`, `Customers`, `Backoffice` oraz `Shared`,
   - warstwy: `Domain`, `Application`, `Infrastructure`.
   Wyjątek: `App\Kernel`. Klasa poza tą strukturą kończy `make backend-arch` błędem.
 - Kierunek zależności wewnątrz modułu: `Infrastructure` → `Application` → `Domain`.
@@ -58,7 +58,14 @@ Modularny monolit, DDD + architektura heksagonalna (Clean Architecture). Reguły
 - Klienci wołają `/api/...`, proxy usuwa prefiks, więc trasy Symfony są bez `/api` ([ADR-0005](../../docs/adr/0005-catalog-inventory-and-admin-api-access.md)).
 - `/catalog/...` (i inne publiczne): tylko odczyt. Każda operacja zapisu jest pod `/admin/...`, za firewallem `admin_api`; pilnuje tego test `AdminApiSecurityTest`.
 - Trasy JSON mają `format: 'json'`. Błędy to `application/problem+json` (`ApiExceptionSubscriber`): wyjątki domenowe `NotFound` → 404, `Conflict` → 409, `InvalidValue` → 422.
-- Administracyjne API chroni **tymczasowy** token Bearer z sekretu `ADMIN_API_TOKEN` (min. 32 znaki, pusty = brak dostępu). Tylko testy i wywołania serwerowe; nigdy w kodzie przeglądarki ani w zmiennych `VITE_*`/`NEXT_PUBLIC_*`. Przed podłączeniem panelu admina zastąpi go logowanie z sesją HttpOnly i CSRF. Lokalnie ustaw go w `.env.local` (`openssl rand -hex 32`); testy generują własny.
+- Dostęp: tokeny dostępu OpenID Connect z Keycloaka, walidowane bezstanowo (bez sesji), szczegóły w [ADR-0005](../../docs/adr/0005-catalog-inventory-and-admin-api-access.md), sekcja 6:
+  - `/admin/...` (firewall `admin_api`): token realmu `admin`; `ROLE_ADMIN` wyłącznie z roli klienta `admin` na `admin-api`,
+  - `/catalog/...` i `/health` (firewall `public`): bez uwierzytelniania, przesłany token jest ignorowany,
+  - każda inna ścieżka, np. `/me` (firewall `store_api`): token realmu `store` (`ROLE_CUSTOMER`); nowa trasa poza API publicznym jest więc domyślnie chroniona,
+  - konfiguracja: `OIDC_STORE_*` i `OIDC_ADMIN_*` (issuer, adres discovery, audience, dozwoleni klienci `azp`); `.env` ma wartości dev,
+  - tokeny nigdy nie trafiają do kodu przeglądarki ani do zmiennych `VITE_*`/`NEXT_PUBLIC_*`,
+  - rotacja kluczy podpisu: procedura w ADR-0005.
+- Testy nie potrzebują Keycloaka: `tests/Support/Security` (`FakeOidcProvider` jako mock HttpClienta, klucze generowane raz na przebieg, `TestTokens` z nadpisywaniem dowolnego claimu). `ApiTestCase::request(..., admin: true)` wysyła token administratora, `customer()` token klienta.
 
 ## Konwencje Symfony
 
@@ -79,7 +86,7 @@ Modularny monolit, DDD + architektura heksagonalna (Clean Architecture). Reguły
 
 ## Struktura
 
-- `src/<Moduł>/<Warstwa>/`: kod aplikacji; moduły `Catalog`, `Inventory` i `Shared` (`Money`, `VatRate`, problem details, bezpieczeństwo API, `/health`)
+- `src/<Moduł>/<Warstwa>/`: kod aplikacji; moduły `Catalog`, `Inventory`, `Customers` (klienci sklepu), `Backoffice` (administratorzy) i `Shared` (`Money`, `VatRate`, `ExternalIdentity`, problem details, bezpieczeństwo API, `/health`)
 - mapowania Doctrine: `src/<Moduł>/Infrastructure/Persistence/Doctrine/Mapping/*.orm.xml`, typy DBAL dla value objects z `#[AsDbalType]`
 - `tests/Support/Contract/`: walidacja odpowiedzi względem kontraktu (kontrakt montowany w kontenerze dev jako `/contract`)
 - `tests/Unit/` (bez kernela), `tests/Integration/` (`KernelTestCase` z bazą: repozytoria, zapytania, schemat), `tests/Functional/` (`WebTestCase`, HTTP): struktura katalogów odzwierciedla `src/`; `tests/Support/`: wspólne klasy testów (czyszczenie bazy, fixtures, repozytoria w pamięci)

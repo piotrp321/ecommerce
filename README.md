@@ -77,12 +77,12 @@ Katalog sklepu pochodzi z publicznego API backendu albo z danych demonstracyjnyc
 
 - **Awaria backendu:** strony sklepu zwracają stronę błędu (HTTP 500), nigdy pustego katalogu ani danych demo. Kontener sklepu zostaje zdrowy, bo `HEALTHCHECK` sprawdza tylko `/healthz` (żywotność procesu Next.js).
 
-Po `make bootstrap` katalog w backendzie jest pusty. Dane dodasz przez administracyjne API z tymczasowym tokenem ([ADR-0005](docs/adr/0005-catalog-inventory-and-admin-api-access.md)):
+Po `make bootstrap` katalog w backendzie jest pusty. Dane dodasz przez administracyjne API z tokenem dostępu administratora: token realmu `admin` z Keycloaka, wydany klientowi `admin-bff`, z rolą klienta `admin` na `admin-api` ([ADR-0005](docs/adr/0005-catalog-inventory-and-admin-api-access.md)). Backend sprawdza go bez sesji; adresy realmów ustawiają zmienne `OIDC_ADMIN_*` w `apps/backend/.env`.
+
+> **Plan:** Keycloak w środowisku dev i sposób pobrania tokenu opisze osobna zmiana. Do tego czasu backend dev odpowiada na administracyjne API kodem 401.
 
 ```bash
-# Raz: token tylko w apps/backend/.env.local (ignorowany przez git), nigdy w repozytorium.
-echo "ADMIN_API_TOKEN=$(openssl rand -hex 32)" >> apps/backend/.env.local
-TOKEN="$(grep '^ADMIN_API_TOKEN=' apps/backend/.env.local | cut -d= -f2)"
+TOKEN='<token dostępu administratora>'   # nie zapisuj go w repozytorium
 API=https://localhost   # backend dev; -k akceptuje lokalny certyfikat Caddy
 
 curl -k -X POST "$API/admin/catalog/categories" -H "Authorization: Bearer $TOKEN" \
@@ -325,6 +325,10 @@ Obrazy nie zawierają sekretów ani wartości z `.env`. Konfigurację podaje si�
 | `STORE_OIDC_CLIENT_SECRET`, `ADMIN_OIDC_CLIENT_SECRET` | tak | Sekrety klientów `store-bff` i `admin-bff`, importowane do realmów i przekazywane sklepowi |
 | `REDIS_SESSION_PASSWORD`, `REDIS_OPS_PASSWORD` | tak | Hasła użytkowników `store` i `ops` Redisa sesji; bez białych znaków, hasło `store` tylko ze znaków bezpiecznych w URL (trafia do `STORE_REDIS_URL`) |
 | `STORE_SESSION_ENC_KEYS` | tak | Klucze szyfrowania sesji sklepu `kid:base64(32 bajty)[,…]`, pierwszy aktywny, np. `k1:$(openssl rand -base64 32)` |
+| `OIDC_STORE_ISSUER`, `OIDC_ADMIN_ISSUER` | tak | Dokładny `iss` tokenów realmu `store` / `admin`, np. `https://auth.example.com/realms/store` (`https://AUTH_DOMAIN/realms/<realm>`) |
+| `OIDC_STORE_DISCOVERY_URL`, `OIDC_ADMIN_DISCOVERY_URL` | tak | Adres realmu w sieci Compose, zakończony `/`, np. `http://keycloak:8080/realms/store/` |
+| `OIDC_STORE_AUDIENCE`, `OIDC_ADMIN_AUDIENCE` | tak | Wymagany `aud`: `store-api` / `admin-api` |
+| `OIDC_STORE_CLIENTS`, `OIDC_ADMIN_CLIENTS` | tak | Dozwoleni klienci (`azp`, po przecinku): `store-bff` / `admin-bff` |
 | `EDGE_GLOBAL_OPTIONS` | nie | Dodatkowe opcje globalne Caddy, np. `email ops@example.com` dla ACME |
 | `STORE_BACKEND_URL` | nie | Adres backendu dla serwera sklepu, domyślnie `http://backend:80`; pusta wartość włącza dane demo (sekcja „Sklep: katalog z API albo dane demo”) |
 | `PROD_HTTP_PORT`, `PROD_HTTPS_PORT`, `PROD_HTTP3_PORT` | nie | Porty edge na hoście (domyślnie 80/443) |
@@ -338,6 +342,10 @@ make build-prod
 export APP_SECRET=… POSTGRES_PASSWORD=… STORE_DOMAIN=shop.example.com ADMIN_DOMAIN=admin.example.com AUTH_DOMAIN=auth.example.com \
   KEYCLOAK_DB_PASSWORD=… KEYCLOAK_ADMIN_USERNAME=… KEYCLOAK_ADMIN_PASSWORD=… STORE_OIDC_CLIENT_SECRET=… ADMIN_OIDC_CLIENT_SECRET=… \
   REDIS_SESSION_PASSWORD=… REDIS_OPS_PASSWORD=… STORE_SESSION_ENC_KEYS=…
+export OIDC_STORE_ISSUER=https://auth.example.com/realms/store OIDC_STORE_DISCOVERY_URL=http://keycloak:8080/realms/store/ \
+  OIDC_STORE_AUDIENCE=store-api OIDC_STORE_CLIENTS=store-bff
+export OIDC_ADMIN_ISSUER=https://auth.example.com/realms/admin OIDC_ADMIN_DISCOVERY_URL=http://keycloak:8080/realms/admin/ \
+  OIDC_ADMIN_AUDIENCE=admin-api OIDC_ADMIN_CLIENTS=admin-bff
 docker compose -f compose.yaml -f compose.prod.yaml up --detach --wait database
 DOCKER_COMP="docker compose -f compose.yaml -f compose.prod.yaml" ./infra/scripts/keycloak-db.sh
 docker compose -f compose.yaml -f compose.prod.yaml up --detach --wait
@@ -413,14 +421,14 @@ Obraz sprawdza osobno `make store-check-prod` na `127.0.0.1:8082` (bez backendu 
 
 Kontrola stosu używa testowych domen `store.localhost`, `admin.localhost` i `auth.localhost` z lokalnym CA Caddy. Dane trzyma w tmpfs, więc nie zostawia wolumenów, a sekrety generuje na czas testu i nigdzie ich nie zapisuje. Sprawdza:
 
-- **konfigurację:** odmowę startu bez `APP_SECRET`, `POSTGRES_PASSWORD`, `STORE_DOMAIN` i `ADMIN_DOMAIN` oraz bez każdej ze zmiennych tożsamości i sesji (tabela wyżej), domyślny profil bez usług opcjonalnych, brak sekretów i hostname w obrazie Keycloaka,
+- **konfigurację:** odmowę startu bez `APP_SECRET`, `POSTGRES_PASSWORD`, `STORE_DOMAIN` i `ADMIN_DOMAIN` oraz bez każdej ze zmiennych tożsamości, sesji i `OIDC_*` (tabela wyżej), domyślny profil bez usług opcjonalnych, brak sekretów i hostname w obrazie Keycloaka,
 - **routing:** sklep i admin po domenie, fallback SPA, `/api/*` → backend bez prefiksu na obu domenach, ścieżki spoza `/api` zostają przy frontendzie, przekierowanie HTTP → HTTPS (308) na publiczny port, brak obsługi nieznanych domen,
 - **edge:** nagłówki (HSTS, `nosniff`, brak `Server`, `Via` i `X-Powered-By`),
 - **ekspozycję:** porty publikuje tylko edge,
 - **uprawnienia:** uid inny niż 0 we wszystkich aplikacjach, w Keycloaku i Redisie, zero efektywnych capabilities w edge, sklepie, adminie, Keycloaku i Redisie, `read_only`, `cap_drop: ALL` i `no-new-privileges` Keycloaka i Redisa, brak portów Keycloaka (z 9000) i Redisa, sieć `sessions` tylko dla sklepu i Redisa,
 - **Redis sesji:** `NOAUTH` bez hasła, `STORE_REDIS_URL` sklepu loguje się jako `store`, skrypt Lua z `HSET`, `HINCRBY`, `EXISTS` i `HGET` na kluczu `store:*`, `NOPERM` poza `store:*` i dla `FLUSHALL`,
 - **Keycloak przez edge:** discovery obu realmów z issuerem `https://auth.localhost/realms/<realm>`, publiczny JWKS, discovery w sieci z endpointem tokenów na `http://keycloak:8080`; 404 z edge (pusta odpowiedź) dla `/`, konsoli administracyjnej, realmu `master`, `/health`, `/metrics`, publicznych endpointów serwer-serwer i ich niejednoznacznych zapisów, a na domenie sklepu dla `/api/admin/*` i `/auth/backchannel-logout`; przekierowanie HTTP → HTTPS i HSTS,
-- **logowanie:** Authorization Code z PKCE S256 dla `store-bff` jak w przeglądarce (curl z ciasteczkami, użytkownik testowy tworzony przez `kcadm`): formularz logowania na `auth.localhost`, przekierowanie z kodem na `https://store.localhost/auth/callback`, wymiana kodu przez publiczny endpoint tokenów zwraca 404, a przez wewnętrzny `http://keycloak:8080/...` daje token z `iss` `https://auth.localhost/realms/store`, `azp` `store-bff` i `aud` `store-api`; publiczny `userinfo` zwraca 404 nawet z ważnym tokenem; w realmie `admin` grant hasłem przez `admin-cli` (z pominięciem OTP) jest odrzucany,
-- **backend za edge:** `/health` przy haśle bazy ze znakami specjalnymi, migracje (zaraz po starcie, przed sprawdzaniem stron), kod tylko do odczytu, 503 przy zatrzymanej bazie i powrót do 200; po restarcie bazy (tmpfs, pusty klaster) ponownie `keycloak-db.sh` i restart Keycloaka; brak sekretów, haseł testowych i tokenów w logach wszystkich kontenerów,
+- **logowanie:** Authorization Code z PKCE S256 dla `store-bff` jak w przeglądarce (curl z ciasteczkami, użytkownik testowy tworzony przez `kcadm`): formularz logowania na `auth.localhost`, przekierowanie z kodem na `https://store.localhost/auth/callback`, wymiana kodu przez publiczny endpoint tokenów zwraca 404, a przez wewnętrzny `http://keycloak:8080/...` daje token z `iss` `https://auth.localhost/realms/store`, `azp` `store-bff` i `aud` `store-api`, a z tym tokenem `GET https://store.localhost/api/me` przez edge zwraca 200 (backend waliduje token z Keycloaka); publiczny `userinfo` zwraca 404 nawet z ważnym tokenem; w realmie `admin` grant hasłem przez `admin-cli` (z pominięciem OTP) jest odrzucany,
+- **backend za edge:** `/health` przy haśle bazy ze znakami specjalnymi, 401 (nigdy 500) z `/api/me` i `/api/admin/me` bez tokenu i z odrzuconym tokenem, migracje (zaraz po starcie, przed sprawdzaniem stron), kod tylko do odczytu, 503 przy zatrzymanej bazie i powrót do 200; po restarcie bazy (tmpfs, pusty klaster) ponownie `keycloak-db.sh` i restart Keycloaka; brak sekretów, haseł testowych i tokenów w logach wszystkich kontenerów,
 - **sklep z API:** pusty katalog z backendu (strona główna, lista, 404) bez oznaczeń demo i bez `robots`; przy zatrzymanym backendzie kontener sklepu zostaje zdrowy, `/healthz` zwraca 200, a strony 500,
 - **niezależne wdrożenia:** odtworzenie samego sklepu, admina, backendu, edge, Keycloaka i Redisa zostawia pozostałe kontenery nietknięte, a wszystkie trasy, discovery Keycloaka przez edge i logowanie sklepu do Redisa dalej działają.

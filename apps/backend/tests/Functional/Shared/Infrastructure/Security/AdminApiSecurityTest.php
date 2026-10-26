@@ -4,25 +4,19 @@ declare(strict_types=1);
 
 namespace App\Tests\Functional\Shared\Infrastructure\Security;
 
-use App\Shared\Infrastructure\Security\AdminApiTokenHandler;
 use App\Tests\Support\ApiTestCase;
+use App\Tests\Support\Security\InvalidTokens;
+use App\Tests\Support\Security\TestKeys;
+use App\Tests\Support\Security\TestTokens;
 use PHPUnit\Framework\Attributes\DataProvider;
-use Symfony\Component\Security\Core\User\InMemoryUser;
 
+/**
+ * Firewall admin_api (^/admin/): access tokens of the admin realm, the
+ * administrator role only from the admin API client's role "admin".
+ */
 final class AdminApiSecurityTest extends ApiTestCase
 {
     private const string PRODUCT = '0192f0c4-7c2a-7c51-9b1e-2f3c4d5e6f70';
-
-    /** @var array{mixed, mixed}|null */
-    private ?array $originalToken = null;
-
-    protected function tearDown(): void
-    {
-        if (null !== $this->originalToken) {
-            [$_SERVER['ADMIN_API_TOKEN'], $_ENV['ADMIN_API_TOKEN']] = $this->originalToken;
-        }
-        parent::tearDown();
-    }
 
     /**
      * @return iterable<string, array{string, string}>
@@ -30,6 +24,7 @@ final class AdminApiSecurityTest extends ApiTestCase
     public static function adminEndpoints(): iterable
     {
         foreach ([
+            ['GET', '/admin/me'],
             ['GET', '/admin/catalog/products'],
             ['POST', '/admin/catalog/products'],
             ['GET', '/admin/catalog/products/'.self::PRODUCT],
@@ -52,89 +47,115 @@ final class AdminApiSecurityTest extends ApiTestCase
     #[DataProvider('adminEndpoints')]
     public function testRequiresABearerToken(string $method, string $uri): void
     {
-        $this->client->request($method, $uri, server: ['CONTENT_TYPE' => 'application/json'], content: '{}');
+        $this->request($method, $uri, 'GET' === $method ? null : []);
 
         $this->assertProblem(401);
         self::assertSame('Bearer', $this->client->getResponse()->headers->get('WWW-Authenticate'));
     }
 
     #[DataProvider('adminEndpoints')]
-    public function testRejectsAWrongToken(string $method, string $uri): void
+    public function testForbidsAValidTokenWithoutTheAdministratorRole(string $method, string $uri): void
     {
-        $this->client->request($method, $uri, server: [
-            'HTTP_AUTHORIZATION' => 'Bearer '.strrev(self::adminToken()),
-            'CONTENT_TYPE' => 'application/json',
-        ], content: '{}');
+        $this->request($method, $uri, 'GET' === $method ? null : [], token: TestTokens::admin(['resource_access' => null]));
 
-        $this->assertProblem(401, 'invalid');
-        self::assertSame('Bearer error="invalid_token"', $this->client->getResponse()->headers->get('WWW-Authenticate'));
+        $this->assertProblem(403, 'Access denied.');
+        self::assertSame('Bearer error="insufficient_scope"', $this->client->getResponse()->headers->get('WWW-Authenticate'));
     }
 
     /**
      * @return iterable<string, array{string}>
      */
-    public static function invalidAuthorizationHeaders(): iterable
+    public static function invalidTokens(): iterable
     {
-        yield 'token prefix' => ['Bearer {token-prefix}'];
-        yield 'token with suffix' => ['Bearer {token}x'];
+        return InvalidTokens::cases();
+    }
+
+    #[DataProvider('invalidTokens')]
+    public function testRejectsAnInvalidToken(string $case): void
+    {
+        $token = InvalidTokens::make(TestKeys::ADMIN, $case);
+        $this->request('GET', '/admin/catalog/products', token: $token);
+
+        $this->assertProblem(401, 'The bearer token is invalid.');
+        self::assertSame('Bearer error="invalid_token"', $this->client->getResponse()->headers->get('WWW-Authenticate'));
+        self::assertSame(0, $this->adminUsers(), 'A rejected token registers nobody.');
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function malformedAuthorizationHeaders(): iterable
+    {
         yield 'basic scheme' => ['Basic {token}'];
         yield 'token without scheme' => ['{token}'];
         yield 'empty bearer' => ['Bearer '];
     }
 
-    #[DataProvider('invalidAuthorizationHeaders')]
+    #[DataProvider('malformedAuthorizationHeaders')]
     public function testRejectsMalformedCredentials(string $header): void
     {
-        $header = strtr($header, ['{token-prefix}' => substr(self::adminToken(), 0, 32), '{token}' => self::adminToken()]);
+        $this->client->request('GET', '/admin/catalog/products', server: [
+            'HTTP_ACCEPT' => 'application/json',
+            'HTTP_AUTHORIZATION' => strtr($header, ['{token}' => TestTokens::admin()]),
+        ]);
 
-        $this->client->request('GET', '/admin/catalog/products', server: ['HTTP_AUTHORIZATION' => $header]);
-
+        $this->assertResponseMatchesContract('GET', '/admin/catalog/products');
         $this->assertProblem(401);
+        self::assertSame(0, $this->adminUsers());
     }
 
-    public function testAcceptsTheConfiguredToken(): void
+    public function testAcceptsAnAdministratorToken(): void
     {
         $this->admin('GET', '/admin/catalog/products');
 
         $this->assertStatus(200);
     }
 
-    public function testDeniesEverythingWithoutAConfiguredToken(): void
+    /**
+     * @return iterable<string, array{array<string, mixed>}>
+     */
+    public static function tokensWithoutTheAdministratorRole(): iterable
     {
-        $this->configureToken('');
-
-        $this->client->request('GET', '/admin/catalog/products', server: ['HTTP_AUTHORIZATION' => 'Bearer ']);
-        $this->assertProblem(401);
-        $this->client->request('GET', '/admin/catalog/products', server: ['HTTP_AUTHORIZATION' => 'Bearer x']);
-        $this->assertProblem(401);
+        yield 'no client roles' => [['resource_access' => null]];
+        yield 'other roles of the admin API client' => [['resource_access' => ['admin-api' => ['roles' => ['viewer']]]]];
+        yield 'role "admin" of another client' => [['resource_access' => ['admin-bff' => ['roles' => ['admin']], 'account' => ['roles' => ['admin']]]]];
+        yield 'only the realm role "admin"' => [['resource_access' => null, 'realm_access' => ['roles' => ['admin', 'default-roles-admin']]]];
+        yield 'Symfony role name as a client role' => [['resource_access' => ['admin-api' => ['roles' => ['ROLE_ADMIN']]]]];
     }
 
-    public function testDeniesEverythingWhenTheTokenIsNotConfiguredAtAll(): void
+    /**
+     * @param array<string, mixed> $claims
+     */
+    #[DataProvider('tokensWithoutTheAdministratorRole')]
+    public function testForbidsATokenWithoutTheClientRoleAdmin(array $claims): void
     {
-        $this->configureToken(null);
+        $this->request('POST', '/admin/catalog/categories', ['slug' => 'tea', 'name' => 'Tea'], token: TestTokens::admin($claims));
 
-        $this->client->request('GET', '/admin/catalog/products', server: ['HTTP_AUTHORIZATION' => 'Bearer x']);
-
-        $this->assertProblem(401);
+        $this->assertProblem(403, 'Access denied.');
+        self::assertSame('Bearer error="insufficient_scope"', $this->client->getResponse()->headers->get('WWW-Authenticate'));
+        self::assertSame(0, $this->adminUsers(), 'Only administrators are registered.');
+        self::assertSame(0, $this->connection()->fetchOne('SELECT count(*) FROM catalog_category'));
     }
 
-    public function testDeniesEverythingWithATooShortConfiguredToken(): void
+    public function testForbidsALocallyBlockedAdministrator(): void
     {
-        $shortToken = str_repeat('a', AdminApiTokenHandler::MIN_TOKEN_LENGTH - 1);
-        $this->configureToken($shortToken);
+        $this->admin('GET', '/admin/me');
+        $this->assertStatus(200);
+        $this->connection()->executeStatement("UPDATE backoffice_admin_user SET status = 'blocked'");
 
-        $this->client->request('GET', '/admin/catalog/products', server: ['HTTP_AUTHORIZATION' => 'Bearer '.$shortToken]);
+        $this->admin('POST', '/admin/catalog/categories', ['slug' => 'tea', 'name' => 'Tea']);
 
-        $this->assertProblem(401);
+        $this->assertProblem(403, 'Access denied.');
+        self::assertSame('Bearer error="insufficient_scope"', $this->client->getResponse()->headers->get('WWW-Authenticate'));
+        self::assertSame(0, $this->connection()->fetchOne('SELECT count(*) FROM catalog_category'));
     }
 
-    public function testForbidsAnAuthenticatedCallerWithoutTheAdminRole(): void
+    public function testACustomerTokenIsNotAnAdministratorToken(): void
     {
-        $this->client->loginUser(new InMemoryUser('customer', null, ['ROLE_USER']), 'admin_api');
+        $this->request('GET', '/admin/catalog/products', token: TestTokens::customer());
 
-        $this->client->request('POST', '/admin/catalog/categories', server: ['CONTENT_TYPE' => 'application/json'], content: '{"slug":"tea","name":"Tea"}');
-
-        $this->assertProblem(403);
+        $this->assertProblem(401);
+        self::assertSame(0, $this->adminUsers());
     }
 
     public function testThePublicApiNeedsNoToken(): void
@@ -159,15 +180,11 @@ final class AdminApiSecurityTest extends ApiTestCase
         }
     }
 
-    private function configureToken(?string $token): void
+    private function adminUsers(): int
     {
-        $this->originalToken = [$_SERVER['ADMIN_API_TOKEN'] ?? null, $_ENV['ADMIN_API_TOKEN'] ?? null];
-        if (null === $token) {
-            unset($_SERVER['ADMIN_API_TOKEN'], $_ENV['ADMIN_API_TOKEN']);
-        } else {
-            $_SERVER['ADMIN_API_TOKEN'] = $_ENV['ADMIN_API_TOKEN'] = $token;
-        }
-        self::ensureKernelShutdown();
-        $this->client = static::createClient();
+        $count = $this->connection()->fetchOne('SELECT count(*) FROM backoffice_admin_user');
+        \assert(\is_int($count));
+
+        return $count;
     }
 }

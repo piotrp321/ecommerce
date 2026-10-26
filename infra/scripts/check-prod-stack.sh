@@ -18,6 +18,12 @@ export PROD_HTTP_PORT="$HTTP_PORT" PROD_HTTPS_PORT="$HTTPS_PORT" PROD_HTTP3_PORT
 # Test domains (resolved to 127.0.0.1 by curl --resolve/--connect-to) and a local CA
 # instead of ACME.
 export STORE_DOMAIN="store.localhost" ADMIN_DOMAIN="admin.localhost" AUTH_DOMAIN="auth.localhost"
+# Backend resource servers (ADR-0005): the public issuers of the check's Keycloak
+# (AUTH_DOMAIN) and its discovery inside the network.
+export OIDC_STORE_ISSUER="https://${AUTH_DOMAIN}/realms/store" OIDC_STORE_DISCOVERY_URL="http://keycloak:8080/realms/store/" \
+	OIDC_STORE_AUDIENCE="store-api" OIDC_STORE_CLIENTS="store-bff" \
+	OIDC_ADMIN_ISSUER="https://${AUTH_DOMAIN}/realms/admin" OIDC_ADMIN_DISCOVERY_URL="http://keycloak:8080/realms/admin/" \
+	OIDC_ADMIN_AUDIENCE="admin-api" OIDC_ADMIN_CLIENTS="admin-bff"
 export EDGE_GLOBAL_OPTIONS="local_certs
 skip_install_trust"
 
@@ -35,9 +41,12 @@ REDIS_OPS_PASSWORD="$(openssl rand -hex 16)"
 STORE_SESSION_ENC_KEYS="check:$(openssl rand -base64 32)"
 export APP_SECRET POSTGRES_PASSWORD KEYCLOAK_DB_PASSWORD KEYCLOAK_ADMIN_USERNAME KEYCLOAK_ADMIN_PASSWORD \
 	STORE_OIDC_CLIENT_SECRET ADMIN_OIDC_CLIENT_SECRET REDIS_SESSION_PASSWORD REDIS_OPS_PASSWORD STORE_SESSION_ENC_KEYS
-# Required by compose.prod.yaml next to APP_SECRET, POSTGRES_PASSWORD, STORE_DOMAIN and ADMIN_DOMAIN.
-IDENTITY_VARS=(AUTH_DOMAIN KEYCLOAK_DB_PASSWORD KEYCLOAK_ADMIN_USERNAME KEYCLOAK_ADMIN_PASSWORD
-	STORE_OIDC_CLIENT_SECRET ADMIN_OIDC_CLIENT_SECRET REDIS_SESSION_PASSWORD REDIS_OPS_PASSWORD STORE_SESSION_ENC_KEYS)
+# Required by compose.prod.yaml next to APP_SECRET, POSTGRES_PASSWORD, STORE_DOMAIN and ADMIN_DOMAIN
+# (each checked alone: Compose must refuse to start without it).
+REQUIRED_VARS=(AUTH_DOMAIN KEYCLOAK_DB_PASSWORD KEYCLOAK_ADMIN_USERNAME KEYCLOAK_ADMIN_PASSWORD
+	STORE_OIDC_CLIENT_SECRET ADMIN_OIDC_CLIENT_SECRET REDIS_SESSION_PASSWORD REDIS_OPS_PASSWORD STORE_SESSION_ENC_KEYS
+	OIDC_STORE_ISSUER OIDC_STORE_DISCOVERY_URL OIDC_STORE_AUDIENCE OIDC_STORE_CLIENTS
+	OIDC_ADMIN_ISSUER OIDC_ADMIN_DISCOVERY_URL OIDC_ADMIN_AUDIENCE OIDC_ADMIN_CLIENTS)
 
 COMPOSE_FILES=(-f compose.yaml -f compose.prod.yaml -f infra/scripts/compose.prod-check.yaml)
 compose() { docker compose "${COMPOSE_FILES[@]}" "$@"; }
@@ -53,7 +62,12 @@ fetch() {
 	shift 2
 	curl -sk --resolve "${domain}:${HTTPS_PORT}:127.0.0.1" "$@" "https://${domain}:${HTTPS_PORT}${path}" || true
 }
-status() { fetch "$1" "$2" -o /dev/null -w '%{http_code}'; }
+# HTTP status: status <domain> <path> [curl options...], e.g. -H for request headers.
+status() {
+	local domain="$1" path="$2"
+	shift 2
+	fetch "$domain" "$path" "$@" -o /dev/null -w '%{http_code}'
+}
 header() { fetch "$1" "$2" -D - -o /dev/null | tr -d '\r' | grep -i "^$3:" | cut -d' ' -f2- || true; }
 expect_health() {
 	local expected="$1" label="$2" got
@@ -83,7 +97,7 @@ else
 	pass "compose.prod.yaml refuses to start without APP_SECRET/POSTGRES_PASSWORD/STORE_DOMAIN/ADMIN_DOMAIN"
 fi
 prod_config_ok && pass "compose.prod.yaml accepts the complete configuration" || fail "compose.prod.yaml refuses the complete configuration"
-for var in "${IDENTITY_VARS[@]}"; do
+for var in "${REQUIRED_VARS[@]}"; do
 	if env -u "$var" docker compose -f compose.yaml -f compose.prod.yaml config -q 2>/dev/null; then
 		fail "compose.prod.yaml accepts a missing ${var}"
 	else
@@ -339,6 +353,15 @@ res="$(printf 'grant_type=password&client_id=admin-cli&username=check-no-otp&pas
 
 echo "== Backend behind the edge"
 expect_health 200 "health check with special-character database password"
+# Protected APIs: 401 without a token and with a rejected one (the identity provider of
+# the check is unreachable), never 500 (e.g. a missing OIDC_* variable).
+for target in "$STORE_DOMAIN /api/me" "$ADMIN_DOMAIN /api/admin/me"; do
+	read -r domain path <<<"$target"
+	got="$(status "$domain" "$path")"
+	[ "$got" = "401" ] && pass "${domain}${path} without a token -> 401" || fail "${domain}${path} without a token: HTTP ${got}"
+	got="$(status "$domain" "$path" -H 'Authorization: Bearer not.a.token')"
+	[ "$got" = "401" ] && pass "${domain}${path} with a rejected token -> 401" || fail "${domain}${path} with a rejected token: HTTP ${got}"
+done
 compose exec -T backend sh -c 'touch /app/src/.write-test' >/dev/null 2>&1 \
 	&& fail "application code is writable" || pass "application code is read-only"
 compose stop database >/dev/null 2>&1

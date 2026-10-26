@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<doctrine-mapping xmlns="http://doctrine-project.org/schemas/orm/doctrine-mapping"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  xsi:schemaLocation="http://doctrine-project.org/schemas/orm/doctrine-mapping
+                  https://www.doctrine-project.org/schemas/orm/doctrine-mapping.xsd">
+    <!-- One customer per external identity (issuer + subject); concurrent first requests rely on this constraint. -->
+    <entity name="App\Customers\Domain\Customer" table="customers_customer">
+        <unique-constraints>
+            <unique-constraint name="customers_customer_identity_key" columns="issuer,subject"/>
+        </unique-constraints>
+
+        <id name="id" type="customers_customer_id"/>
+        <field name="issuer" type="string" length="255"/>
+        <field name="subject" type="string" length="255"/>
+        <field name="email" type="string" length="254" nullable="true"/>
+        <field name="emailVerified" column="email_verified" type="boolean"/>
+        <field name="createdAt" column="created_at" type="datetimetz_immutable"/>
+        <field name="updatedAt" column="updated_at" type="datetimetz_immutable"/>
+    </entity>
+</doctrine-mapping>
