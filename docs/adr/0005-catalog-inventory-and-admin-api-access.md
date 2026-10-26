@@ -90,6 +90,11 @@ Accounts, login and roles of customers and administrators live in an external id
      - RS256 signature with the realm's published keys (`OIDC_*_DISCOVERY_URL`, the internal address of the realm),
      - exact `iss` (`OIDC_*_ISSUER`, the public address of the realm), `aud` (`OIDC_*_AUDIENCE`),
        `exp`, `nbf` and `iat` without leeway, and a `sub`.
+     - The backend reads the discovery document at the internal address, and fetches the keys from the
+       `jwks_uri` that the document announces. That URI must be reachable from the backend container,
+       i.e. Keycloak must announce its backchannel endpoints at the address of the request
+       (`KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`) and not at the public address of the tokens' `iss`.
+       Keycloak's configuration is not part of the backend.
    - A decorator of each firewall's token handler (`AccessTokenPolicy`) also requires `typ: Bearer`
      (no ID, refresh or logout tokens) and an `azp` listed in `OIDC_*_CLIENTS`.
      It runs before the user provider, so a rejected token registers nobody.
@@ -117,11 +122,18 @@ Accounts, login and roles of customers and administrators live in an external id
    - Errors (RFC 6750), as `application/problem+json` with a generic `detail` (the reason is only logged):
      401 with `WWW-Authenticate: Bearer` without a token or `Bearer error="invalid_token"` for a rejected one,
      403 with `Bearer error="insufficient_scope"` for a valid token without the required role.
+   - Lifetime of the cached keys: the `max-age` of the JWKS response's `Cache-Control` header, as sent by
+     Keycloak; 1 hour when the response has none (Symfony's default), at most 30 days. The value Keycloak
+     sends is to be checked on the running provider.
    - Signing key rotation in Keycloak:
      1. add the new key with a lower priority than the active one: it is published in the JWKS but not used for signing yet,
-     2. wait longer than the JWKS cache lifetime (the provider's max-age, 1 hour by default), so every backend has it,
+     2. wait longer than the lifetime of the cached keys, so every backend has it,
      3. give the new key the highest priority: new tokens are signed with it,
      4. remove the old key only after the last token signed with it has expired (the access token lifespan).
+   - Emergency withdrawal of a compromised key: a new `kid` does not refresh the cache, so a backend trusts
+     the removed key until its cached keys expire. After removing the key in Keycloak, run
+     `bin/console cache:pool:clear cache.oidc` on every backend instance; the next request downloads the
+     current keys. Tokens signed with the removed key are then rejected (401).
 
 ## Consequences
 
