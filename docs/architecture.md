@@ -8,18 +8,21 @@ Główne źródło prawdy o architekturze systemu. Dokument ma dwie wyraźnie od
 
 | Komponent | Technologia | Rola |
 |---|---|---|
-| edge | Caddy (`infra/edge`) | Jedyny publiczny punkt wejścia produkcji: TLS, routing po domenie (`STORE_DOMAIN`, `ADMIN_DOMAIN`) i ścieżce ([ADR-0004](adr/0004-edge-proxy-and-production-topology.md)) |
+| edge | Caddy (`infra/edge`) | Jedyny publiczny punkt wejścia produkcji: TLS, routing po domenie (`STORE_DOMAIN`, `ADMIN_DOMAIN`, `AUTH_DOMAIN`) i ścieżce ([ADR-0004](adr/0004-edge-proxy-and-production-topology.md)) |
 | backend | Symfony, DDD + Hexagonal (`apps/backend`) | Jedyne źródło logiki biznesowej; bezstanowe REST API |
 | store | Next.js, SSR (`apps/store`) | Interfejs sklepu; katalog czyta z backendu po stronie serwera |
 | admin | React + Vite, SPA (`apps/admin`) | Interfejs administracyjny; dziś na danych demonstracyjnych, bez połączenia z API |
-| database | PostgreSQL | Dane backendu; dostęp tylko z backendu |
+| database | PostgreSQL | Dane backendu (dostęp tylko z backendu) i osobna baza `keycloak` z własną rolą |
+| keycloak | Keycloak 26.8.0 (`infra/docker/keycloak`, realmy w `infra/keycloak/realms`) | Dostawca tożsamości (OIDC): realmy `store` i `admin` |
+| redis-session | Redis 8.8.2 | Magazyn sesji sklepu (ACL, `noeviction`, AOF); dostęp tylko ze sklepu |
 
 ### Przepływy komunikacji
 
 - Przeglądarka woła `/api/...` na własnej domenie (same-origin). Edge przekazuje to do backendu bez prefiksu `/api`; w dev robi to serwer Vite admina. Sklep nie ma proxy `/api`: woła backend wyłącznie po stronie serwera (`STORE_BACKEND_URL`).
 - Store renderuje katalog na serwerze i woła backend bezpośrednio (server-to-server, `STORE_BACKEND_URL`, bez edge i bez prefiksu `/api`) ([ADR-0009](adr/0009-store-catalog-api.md)).
 - Nagłówek `Authorization` przechodzi przez edge bez zmian.
-- Tylko edge ma publiczne porty; backend, store, admin i baza nie są publikowane.
+- Przeglądarka loguje się na `https://AUTH_DOMAIN` (w dev `http://localhost:8180`). Wymiana kodu na tokeny, discovery i JWKS idą siecią wewnętrzną (`http://keycloak:8080`), nie przez edge.
+- Tylko edge ma publiczne porty; backend, store, admin, Keycloak, Redis i baza nie są publikowane. Redis sesji jest w osobnej sieci `sessions`, wspólnej tylko ze sklepem.
 
 ### Moduły backendu
 
@@ -39,6 +42,20 @@ Granice pilnuje Deptrac (`apps/backend/deptrac.yaml`); moduły komunikują się 
 - Katalog (`/catalog/...`) jest publiczny i tylko do odczytu, bez logowania.
 - API administracyjne (`/admin/...`) chroni tymczasowy token Bearer z sekretu `ADMIN_API_TOKEN` ([ADR-0005](adr/0005-catalog-inventory-and-admin-api-access.md), pkt 6). Używany wyłącznie w testach i wywołaniach serwerowych, nigdy w przeglądarce.
 - Autoryzacja jest zawsze egzekwowana na backendzie.
+
+### Tożsamość (Keycloak)
+
+- Jedna instancja Keycloak 26.8.0, dwa realmy: `store` (klienci sklepu) i `admin` (administratorzy; OTP zawsze wymagane w przepływie przeglądarkowym, `admin-cli` bez grantu hasłem). Realmy są importowane przy pierwszym starcie; sekrety i adresy to placeholdery z konfiguracji uruchomieniowej.
+- Issuer publiczny: dev `http://localhost:8180/realms/<realm>`, prod `https://${AUTH_DOMAIN}/realms/<realm>`. Discovery, tokeny i JWKS usługi pobierają przez sieć wewnętrzną: `http://keycloak:8080/realms/<realm>/` (`KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`), z tym samym issuerem.
+- Klienci: `store-bff` (poufny, Authorization Code + PKCE S256, redirect `${STORE_PUBLIC_URL}/auth/callback`, back-channel logout `http://store:3000/auth/backchannel-logout`), `admin-bff` (zarezerwowany pod przyszły BFF admina), `store-api` i `admin-api` (audience tokenów). Rola klienta `admin` na `admin-api` odpowiada `ROLE_ADMIN` w backendzie.
+- Edge na `AUTH_DOMAIN` udostępnia tylko endpointy potrzebne przeglądarce: `/realms/store/*`, `/realms/admin/*`, `/resources/*`. Endpointy serwer-serwer tych realmów (`token`, `userinfo`, `revoke`, `token/introspect`, `ext/*`, `auth/device`, `clients-registrations/*`), konsola administracyjna, realm `master`, `/health` i `/metrics` zwracają 404. Administracja tylko przez `kcadm.sh` w kontenerze ([ADR-0004](adr/0004-edge-proxy-and-production-topology.md)).
+- Prod: obraz `keycloak_prod` (`kc.sh build`, `start --optimized`), nie-root, `read_only`, `cap_drop: ALL`; baza i rola `keycloak` w tym samym PostgreSQL, tworzone przez `infra/scripts/keycloak-db.sh` przed startem Keycloaka.
+
+### Sesje sklepu (redis-session)
+
+- Osobny Redis `redis-session` (`redis:8.8.2-alpine`, `noeviction`, AOF): ACL z wyłączonym użytkownikiem `default`, użytkownik `store` ograniczony do kluczy `store:*` i poleceń magazynu sesji, `ops` do administracji. Definicja i ACL są wspólne dla dev i prod (`compose.yaml`).
+- Prod: nie-root (`redis`), `read_only`, `cap_drop: ALL`, bez portów, tylko w sieci `sessions` ze sklepem.
+- Sklep dostaje komplet konfiguracji logowania i sesji (`STORE_AUTH_MODE=oidc`, `STORE_OIDC_*`, `STORE_REDIS_URL`, `STORE_SESSION_ENC_KEYS`); kod BFF opisuje część „Planowane”.
 
 ## Planowane (zatwierdzone, w realizacji)
 
@@ -67,13 +84,6 @@ Przeglądarka
 ```
 
 Tokeny dokleja po stronie serwera BFF sklepu oraz oauth2-proxy / admin-bff; SPA admina i przeglądarka ich nie widzą. Backend nie trzyma sesji: przy każdym żądaniu waliduje JWT.
-
-### Keycloak (tożsamość)
-
-- Jedna instancja Keycloak 26.8.0, dwa realmy: `store` (klienci sklepu) i `admin` (administratorzy; MFA).
-- Issuer publiczny: dev `http://localhost:8180/realms/<realm>`, prod `https://${AUTH_DOMAIN}/realms/<realm>`. Na `AUTH_DOMAIN` będą publiczne endpointy obu realmów (`/realms/store/...`, `/realms/admin/...`, m.in. przekierowanie z `store-bff` na `/realms/store/protocol/openid-connect/auth`); konsola administracyjna Keycloak (`/admin/...`) nie będzie publiczna.
-- Discovery i JWKS pobierane przez sieć wewnętrzną: `http://keycloak:8080/realms/<realm>/` (`KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`), a nie przez adres publiczny.
-- Klienci: `store-bff` (poufny, Authorization Code + PKCE S256), `admin-bff` (zarezerwowany pod przyszły BFF admina), `store-api` i `admin-api` (występują jako audience tokenów, przez audience mapper). Rola klienta `admin` na `admin-api` odpowiada `ROLE_ADMIN` w backendzie.
 
 ### Backend: walidacja JWT
 
@@ -104,7 +114,7 @@ Błędy to `application/problem+json`: 401 z `WWW-Authenticate: Bearer error="in
 ### Store jako BFF
 
 - Next.js będzie pełnił rolę BFF: logowanie Authorization Code + PKCE S256 (klient `store-bff`), tokeny wyłącznie po stronie serwera, w przeglądarce tylko identyfikator sesji w ciasteczku.
-- Sesje w osobnym Redis `redis-session` (`redis:8.8.2-alpine`, `noeviction`, AOF, ACL). Tokeny w Redis szyfrowane AES-256-GCM, klucz rekordu to hash identyfikatora sesji.
+- Sesje w `redis-session` (część „Stan aktualny”). Tokeny w Redis szyfrowane AES-256-GCM, klucz rekordu to hash identyfikatora sesji.
 - Store wywołuje backend z tokenem Bearer użytkownika; autoryzacja zostaje na backendzie.
 
 ### Admin
@@ -113,6 +123,5 @@ Błędy to `application/problem+json`: 401 z `WWW-Authenticate: Bearer error="in
 
 ### Redis, RabbitMQ, Elasticsearch
 
-- Redis sesji (`redis-session`) powstaje teraz, razem z tożsamością.
 - Redis cache powstanie później jako osobna instancja (inne wymagania niż sesje: eviction zamiast `noeviction`).
 - RabbitMQ i Elasticsearch to opcjonalne profile Compose, bez integracji biznesowej; integrujemy je dopiero przy konkretnym przypadku użycia.
