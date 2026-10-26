@@ -1,0 +1,10 @@
+# Build context of the Keycloak image is the repository root; this file (next to
+# the Dockerfile, picked up by BuildKit) restricts it to an allowlist: the realm
+# definitions only. Applications, .env files, tooling such as .claude/ and the
+# dev seed scripts never reach the image. Add new paths here deliberately.
+*
+
+!infra/keycloak/realms/
+
+**/.DS_Store
+**/.gitignore

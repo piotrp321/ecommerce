@@ -6,9 +6,31 @@
 # - admin (Vite) and store (Next.js) run dev servers with HMR on the bind-mounted
 #   repository; their node_modules (and the store's .next) live in Docker volumes
 #   (Linux binaries, build cache), separate from a macOS host install, and are
-#   installed explicitly with `make pnpm-install`.
+#   installed explicitly with `make pnpm-install`,
+# - Keycloak (identity provider, `start-dev`) and Redis for the store sessions run
+#   here only; no application service depends on them (depends_on), so the backend
+#   and the store start and serve the catalog while they are stopped.
 # All ports are bound to 127.0.0.1 only, so they are not reachable from the network.
 # In production the edge proxy (compose.prod.yaml) is the only entry point.
+#
+# Secrets below are development defaults only (values starting with "dev-only-"),
+# overridable through the environment or .env; never use them outside development.
+
+# Values shared by several services (one default for each).
+x-dev:
+  keycloak-db-password: &keycloak-db-password ${KEYCLOAK_DB_PASSWORD:-dev-only-keycloak-db-password}
+  store-public-url: &store-public-url ${STORE_PUBLIC_URL:-http://localhost:${STORE_PORT:-3000}}
+  admin-public-url: &admin-public-url ${ADMIN_PUBLIC_URL:-http://localhost:${ADMIN_PORT:-5173}}
+  store-oidc-client-secret: &store-oidc-client-secret ${STORE_OIDC_CLIENT_SECRET:-dev-only-store-bff-client-secret}
+  admin-oidc-client-secret: &admin-oidc-client-secret ${ADMIN_OIDC_CLIENT_SECRET:-dev-only-admin-bff-client-secret}
+  # The store user's Redis password; Compose cannot concatenate anchors, so the URL repeats
+  # the same default (keep both lines together; check-dev-infra.sh asserts they match).
+  # It goes into a URL unencoded: use URL-safe characters only (no whitespace, @ : / ? # %).
+  redis-session-password: &redis-session-password ${REDIS_SESSION_PASSWORD:-dev-only-redis-store-password}
+  store-redis-url: &store-redis-url redis://store:${REDIS_SESSION_PASSWORD:-dev-only-redis-store-password}@redis-session:6379
+  # Public issuers (browser and token "iss"); discovery inside the network uses keycloak:8080.
+  store-issuer: &store-issuer http://localhost:${KEYCLOAK_PORT:-8180}/realms/store
+  admin-issuer: &admin-issuer http://localhost:${KEYCLOAK_PORT:-8180}/realms/admin
 
 services:
   backend:
@@ -17,6 +39,15 @@ services:
       target: frankenphp_dev
     environment:
       APP_ENV: dev
+      # OpenID Connect resource servers (store-api, admin-api); not used by the code yet.
+      OIDC_STORE_ISSUER: *store-issuer
+      OIDC_STORE_DISCOVERY_URL: http://keycloak:8080/realms/store/.well-known/openid-configuration
+      OIDC_STORE_AUDIENCE: store-api
+      OIDC_STORE_CLIENTS: store-bff
+      OIDC_ADMIN_ISSUER: *admin-issuer
+      OIDC_ADMIN_DISCOVERY_URL: http://keycloak:8080/realms/admin/.well-known/openid-configuration
+      OIDC_ADMIN_AUDIENCE: admin-api
+      OIDC_ADMIN_CLIENTS: admin-bff
     volumes:
       - ./apps/backend:/app
       # API contract for the contract tests (read-only, development only).
@@ -39,6 +70,9 @@ services:
     tty: true
 
   database:
+    environment:
+      # Read by infra/scripts/keycloak-db.sh (psql \getenv) to set the keycloak role password.
+      KEYCLOAK_DB_PASSWORD: *keycloak-db-password
     ports:
       - target: 5432
         host_ip: 127.0.0.1
@@ -75,6 +109,19 @@ services:
       # Catalog from the backend inside the Compose network (ADR-0009). Unset: the API;
       # STORE_BACKEND_URL= (empty, e.g. in .env) selects the demo data.
       STORE_BACKEND_URL: ${STORE_BACKEND_URL-http://backend:80}
+      # Customer sign-in (OIDC BFF) and sessions. All are required in STORE_AUTH_MODE=oidc
+      # (the store refuses to start without them). STORE_OIDC_ISSUER is exactly the token
+      # "iss"; STORE_OIDC_INTERNAL_URL is the same issuer inside the network.
+      STORE_ENVIRONMENT: development
+      STORE_AUTH_MODE: oidc
+      STORE_PUBLIC_URL: *store-public-url
+      STORE_OIDC_ISSUER: *store-issuer
+      STORE_OIDC_INTERNAL_URL: http://keycloak:8080/realms/store
+      STORE_OIDC_CLIENT_ID: store-bff
+      STORE_OIDC_CLIENT_SECRET: *store-oidc-client-secret
+      STORE_REDIS_URL: *store-redis-url
+      # kid:base64(32 bytes)[,kid:base64...], the first one active. Development key only.
+      STORE_SESSION_ENC_KEYS: ${STORE_SESSION_ENC_KEYS:-dev1:S1hyo80pliZq1TsRkWC35oNtZAyhzRhCyEjfCmn/hj0=}
     volumes:
       - ./:/workspace
       # Same node_modules volumes as admin, plus the Next.js build cache.
@@ -88,8 +135,86 @@ services:
         published: ${STORE_PORT:-3000}
         protocol: tcp
 
+  # Identity provider: realms "store" and "admin" (infra/keycloak/realms), imported once.
+  # Its database and role live in the shared PostgreSQL; `make up` creates them first
+  # (infra/scripts/keycloak-db.sh). Admin console: http://localhost:${KEYCLOAK_PORT}/admin.
+  keycloak:
+    image: ${IMAGES_PREFIX:-}ecommerce-keycloak-dev
+    build:
+      context: .
+      dockerfile: infra/docker/keycloak/Dockerfile
+      target: keycloak_dev
+    restart: unless-stopped
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://database:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: *keycloak-db-password
+      # Public URL for browsers and the token issuer; requests from inside the network
+      # (http://keycloak:8080) get back-channel endpoints on that internal address.
+      KC_HOSTNAME: http://localhost:${KEYCLOAK_PORT:-8180}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-dev-only-keycloak-admin-password}
+      JAVA_OPTS_KC_HEAP: -Xms256m -Xmx512m
+      # Placeholders of the realm files, resolved during the import.
+      STORE_PUBLIC_URL: *store-public-url
+      ADMIN_PUBLIC_URL: *admin-public-url
+      STORE_OIDC_CLIENT_SECRET: *store-oidc-client-secret
+      ADMIN_OIDC_CLIENT_SECRET: *admin-oidc-client-secret
+    mem_limit: 1g
+    depends_on:
+      database:
+        condition: service_healthy
+    # The management port 9000 (health) stays unpublished.
+    ports:
+      - target: 8080
+        host_ip: 127.0.0.1
+        published: ${KEYCLOAK_PORT:-8180}
+        protocol: tcp
+
+  # Store sessions. ACL: the default user is disabled; "store" may use only keys
+  # store:* and the commands of the store session code (Lua scripts, MULTI/EXEC, the
+  # node-redis handshake HELLO/AUTH/CLIENT SETINFO); "ops" administers (health check, CONFIG).
+  # The ACL file is generated at startup from the environment (no password in git,
+  # in the command line or in the image). Passwords must not contain whitespace.
+  redis-session:
+    image: redis:8.8.2-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_SESSION_PASSWORD: *redis-session-password
+      REDIS_OPS_PASSWORD: ${REDIS_OPS_PASSWORD:-dev-only-redis-ops-password}
+    entrypoint: ["sh", "-ec"]
+    command:
+      - |
+        umask 077
+        {
+          echo "user default reset off"
+          echo "user store reset on >$${REDIS_SESSION_PASSWORD} ~store:* resetchannels -@all +auth +hello +client|setinfo +ping +eval +evalsha +multi +exec +get +getdel +set +del +hset +hgetall +expire +pexpire +sadd +smembers +srem"
+          echo "user ops reset on >$${REDIS_OPS_PASSWORD} ~* &* +@all"
+        } > /tmp/users.acl
+        chown redis:redis /tmp/users.acl
+        exec docker-entrypoint.sh redis-server --aclfile /tmp/users.acl \
+          --appendonly yes --appendfsync everysec --save "" \
+          --maxmemory 256mb --maxmemory-policy noeviction
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_OPS_PASSWORD\" redis-cli --no-auth-warning --user ops ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    mem_limit: 384m
+    volumes:
+      - redis_session_data:/data
+    ports:
+      - target: 6379
+        host_ip: 127.0.0.1
+        published: ${REDIS_PORT:-6379}
+        protocol: tcp
+
 volumes:
   node_modules:
   admin_node_modules:
   store_node_modules:
   store_next:
+  redis_session_data:
