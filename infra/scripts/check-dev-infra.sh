@@ -443,6 +443,10 @@ has "$(redis_as store FLUSHALL)" "NOPERM" && has "$(redis_as store CONFIG GET ma
 multi="$(printf 'MULTI\nSET store:dev-check:tx 1\nPEXPIRE store:dev-check:tx 60000\nEXEC\n' | compose exec -T redis-session sh -c 'REDISCLI_AUTH="$REDIS_SESSION_PASSWORD" exec redis-cli --no-auth-warning --user store' 2>&1 || true)"
 has "$multi" "QUEUED" && ! has "$multi" "ERR" && ! has "$multi" "NOPERM" && pass "redis: user store runs MULTI/EXEC" || fail "redis: MULTI/EXEC for store"
 [ "$(redis_as store EVAL "return redis.call('GET', KEYS[1])" 1 store:dev-check:tx)" = "1" ] && pass "redis: user store runs Lua scripts (EVAL) on store:* keys" || fail "redis: EVAL for store"
+# The commands the store session Lua scripts call (ACL checked inside EVAL as well).
+[ "$(redis_as store EVAL "redis.call('HSET', KEYS[1], 'n', 1); redis.call('HINCRBY', KEYS[1], 'n', 1); return redis.call('EXISTS', KEYS[1]) + redis.call('HGET', KEYS[1], 'n')" 1 store:dev-check:eval)" = "3" ] \
+	&& pass "redis: user store runs Lua scripts with HSET, HINCRBY, EXISTS and HGET on store:* keys" || fail "redis: Lua script with HSET/HINCRBY/EXISTS/HGET for store"
+redis_as store DEL store:dev-check:eval >/dev/null
 [ "$(redis_as store CLIENT SETINFO LIB-NAME dev-check)" = "OK" ] && pass "redis: user store may CLIENT SETINFO (node-redis handshake)" || fail "redis: CLIENT SETINFO for store"
 redis_as store DEL store:dev-check:tx >/dev/null
 

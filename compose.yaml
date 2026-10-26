@@ -79,7 +79,7 @@ services:
         umask 077
         {
           echo "user default reset off"
-          echo "user store reset on >$${REDIS_SESSION_PASSWORD} ~store:* resetchannels -@all +auth +hello +client|setinfo +ping +eval +evalsha +multi +exec +get +getdel +set +del +exists +hget +hset +hgetall +hincrby +expire +pexpire +sadd +smembers +srem"
+          echo "user store reset on >$${REDIS_SESSION_PASSWORD} ~store:* resetchannels -@all +auth +hello +client|setinfo +ping +eval +evalsha +multi +exec +get +getdel +set +del +exists +hget +hset +hgetall +hincrby +pexpire +sadd +smembers +srem"
           echo "user ops reset on >$${REDIS_OPS_PASSWORD} ~* &* +@all"
         } > /tmp/users.acl
         chown redis:redis /tmp/users.acl
