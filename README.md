@@ -51,6 +51,7 @@ make bootstrap
 | Sklep (Next.js, SSR, HMR) | http://localhost:3000 |
 | Keycloak (dev) | http://localhost:8180, konsola: http://localhost:8180/admin (`admin` / `dev-only-keycloak-admin-password`) |
 | Redis sesji sklepu | `127.0.0.1:6379` (tylko z hasłem, sekcja „Keycloak i Redis sesji”) |
+| RabbitMQ, Elasticsearch (opcjonalne) | nie startują z `make up`; `make rabbitmq-up` / `make elasticsearch-up`, sekcja „Usługi opcjonalne” |
 
 W dev wszystkie porty (80, 443, 3000, 5173, 5432, 8180, 6379) są dostępne tylko z `127.0.0.1`. Odpowiedź `/health`:
 
@@ -155,7 +156,7 @@ Testy automatyczne (E2E, QA) mogą wyliczyć kod tak jak `infra/scripts/check-de
 
 #### Kontrola infrastruktury dev
 
-`make stack-check-dev` uruchamia `infra/scripts/check-dev-infra.sh`. Skrypt stawia całą topologię dev we własnym projekcie `ecommerce-dev-check`, przekazywanym jawnie przez `-p`, więc wygrywa z `COMPOSE_PROJECT_NAME` z `.env`. Porty projektu to 28080/28443/25432/25173/23000/28180/26379. Projekt zmienisz zmienną `DEV_CHECK_PROJECT`, a porty zmiennymi `DEV_CHECK_*_PORT`, co pozwala na równoległe sesje. Na końcu skrypt usuwa kontenery i zostawia wolumeny (nigdy `down -v`). Świeży przebieg wymaga więc nowej nazwy projektu, a zmiana portów także, bo realmy importują się raz. Skrypt sam buduje obrazy z bieżącego drzewa roboczego (z cache warstw), więc sprawdza aktualne pliki realmów. Gdy projekt ma już wolumeny, skrypt wypisuje na początku ostrzeżenie `WARN`, bo zmiany w `infra/keycloak/realms/*.json` nie zostaną wtedy sprawdzone. Przy porażce wypisuje logi Keycloaka i Redisa, zanim usunie kontenery. Skrypt sprawdza:
+`make stack-check-dev` uruchamia `infra/scripts/check-dev-infra.sh`. Skrypt stawia całą topologię dev we własnym projekcie `ecommerce-dev-check`, przekazywanym jawnie przez `-p`, więc wygrywa z `COMPOSE_PROJECT_NAME` z `.env`. Porty projektu to 28080/28443/25432/25173/23000/28180/26379 (z `make stack-check-dev-optional` także 28672/28673/28920). Projekt zmienisz zmienną `DEV_CHECK_PROJECT`, a porty zmiennymi `DEV_CHECK_*_PORT`, co pozwala na równoległe sesje. Na końcu skrypt usuwa kontenery i zostawia wolumeny (nigdy `down -v`). Świeży przebieg wymaga więc nowej nazwy projektu, a zmiana portów także, bo realmy importują się raz. Skrypt sam buduje obrazy z bieżącego drzewa roboczego (z cache warstw), więc sprawdza aktualne pliki realmów. Gdy projekt ma już wolumeny, skrypt wypisuje na początku ostrzeżenie `WARN`, bo zmiany w `infra/keycloak/realms/*.json` nie zostaną wtedy sprawdzone. Przy porażce wypisuje logi Keycloaka i Redisa, zanim usunie kontenery. Skrypt sprawdza:
 
 - **usługi:** health Keycloaka i Redisa, `keycloak-db.sh` i `keycloak-dev-seed` uruchomione kilka razy bez błędów, rola `keycloak` bez połączenia z `app` i `postgres` i bez odczytu oraz tworzenia obiektów w `app_test`, `pg_isready` bez zmian,
 - **discovery:** obu realmów z hosta (issuer publiczny) i z sieci Compose (JWKS i token endpoint pod `http://keycloak:8080`),
@@ -166,7 +167,40 @@ Testy automatyczne (E2E, QA) mogą wyliczyć kod tak jak `infra/scripts/check-de
 - **Redis:** `NOAUTH` bez hasła, wyłączony `default`, `noeviction`, ACL użytkownika `store` (działają `MULTI`/`EXEC`, `EVAL`, `CLIENT SETINFO`; zabronione `FLUSHALL`, `CONFIG`, `KEYS`, `CLIENT LIST`, `ACL` i klucze spoza `store:*`),
 - **porty:** wyłącznie `127.0.0.1`, port 9000 niepublikowany,
 - **niezależność aplikacji:** backend `/health` i strona sklepu przy zatrzymanym Keycloaku i Redisie, brak `depends_on` na nich,
-- **trwałość:** po `down`/`up` klucz Redisa, realmy i użytkownicy zostają, a dane aplikacji (tabele i liczba wierszy) są nietknięte.
+- **trwałość:** po `down`/`up` klucz Redisa, realmy i użytkownicy zostają, a dane aplikacji (tabele i liczba wierszy) są nietknięte,
+- **usługi opcjonalne:** `make up` nie uruchamia RabbitMQ ani Elasticsearcha, żadna usługa nie ma na nie `depends_on`, a `make down` usuwa też kontenery z profili.
+
+`make stack-check-dev-optional` (ten sam skrypt z `DEV_CHECK_OPTIONAL=1`; porty `DEV_CHECK_RABBITMQ_PORT`, `DEV_CHECK_RABBITMQ_MANAGEMENT_PORT`, `DEV_CHECK_ELASTICSEARCH_PORT`) uruchamia dodatkowo `make rabbitmq-up` i `make elasticsearch-up` (obrazy RabbitMQ i Elasticsearcha są pobierane przy pierwszym przebiegu) i sprawdza:
+
+- **health** obu usług oraz odmowę startu bez hasła,
+- **uwierzytelnianie:** RabbitMQ odrzuca złe hasło i `guest/guest` spoza kontenera (401), nie ma użytkownika `guest`, a broker odrzuca złe hasło; Elasticsearch odpowiada 401 bez danych logowania i ze złym hasłem, a użytkownik `elastic` ma klaster `green` lub `yellow`,
+- **porty:** RabbitMQ (5672, 15672) i Elasticsearch (9200) tylko na `127.0.0.1`,
+- **trwałość:** trwała kolejka RabbitMQ z trwałą wiadomością i dokument Elasticsearcha przeżywają `make down` i ponowny start.
+
+Ta kontrola nie działa w CI (pobiera duże obrazy); uruchamiaj ją po zmianach profili `messaging` i `search`, `compose*.yaml` lub `Makefile`.
+
+### Usługi opcjonalne: RabbitMQ i Elasticsearch
+
+RabbitMQ (`rabbitmq:4.3.5-management-alpine`, profil Compose `messaging`) i Elasticsearch (`9.5.5`, profil `search`) są przygotowane na kolejne etapy i nie mają jeszcze integracji z aplikacjami: żadna usługa nie ma na nie `depends_on`. Profil domyślny ich nie uruchamia, więc `make up` i `make bootstrap` ich nie startują i nie potrzebują ich pamięci.
+
+| Komenda | Efekt |
+|---|---|
+| `make rabbitmq-up` / `make rabbitmq-down` | Start (czeka na health) / zatrzymanie i usunięcie kontenera RabbitMQ; wolumen `rabbitmq_data` zostaje |
+| `make elasticsearch-up` / `make elasticsearch-down` | Jak wyżej dla Elasticsearcha; wolumen `elasticsearch_data` zostaje |
+| `make down` | Zatrzymuje i usuwa też usługi z profili (wolumeny zostają) |
+| `make logs` | Logi także usług z profili, jeśli działają |
+
+Adresy dev (tylko `127.0.0.1`, porty zmienisz w `.env`):
+
+| Usługa | Adres | Dane logowania dev |
+|---|---|---|
+| RabbitMQ AMQP | `127.0.0.1:5672` (`RABBITMQ_PORT`) | `RABBITMQ_DEFAULT_USER` (`app`) / `RABBITMQ_DEFAULT_PASS` (`dev-only-rabbitmq-password`) |
+| RabbitMQ panel zarządzania | http://localhost:15672 (`RABBITMQ_MANAGEMENT_PORT`) | jak wyżej |
+| Elasticsearch | http://localhost:9200 (`ELASTICSEARCH_PORT`) | użytkownik `elastic`, hasło `ELASTIC_PASSWORD` (`dev-only-elastic-password`) |
+
+Uwierzytelnianie jest wymagane: RabbitMQ nie tworzy użytkownika `guest`, a Elasticsearch ma włączone `xpack.security` (bez TLS, bo jest dostępny tylko w sieci Compose i na `127.0.0.1`); bez danych logowania odpowiada 401. Kontenery nie wystartują bez hasła (`RABBITMQ_DEFAULT_USER`, `RABBITMQ_DEFAULT_PASS`, `ELASTIC_PASSWORD`). Wartości `dev-only-…` są tylko dla dev.
+
+Ograniczenia: RabbitMQ ma limit pamięci 512 MB, a Elasticsearch 1 GB (sterta JVM 512 MB). W Docker Desktop na macOS przydziel Dockerowi co najmniej 6 GB RAM, gdy działają wszystkie usługi z obu profilami. Elasticsearch wymaga `vm.max_map_count` co najmniej 262144 w maszynie wirtualnej Dockera; Docker Desktop ustawia tę wartość, co sprawdzisz poleceniem `docker run --rm alpine sysctl vm.max_map_count` (przy mniejszej wartości Elasticsearch kończy start błędem w logach, `make logs`). RabbitMQ używa stałej nazwy hosta `rabbitmq`, bo katalog danych zależy od nazwy węzła.
 
 ### Przejście z układu sprzed monorepo
 
@@ -199,9 +233,11 @@ Inna wersja Node niż w `.node-version` kończy `pnpm install` błędem (`engine
 | Komenda | Opis |
 |---|---|
 | `make bootstrap` | Środowisko dev od zera: build, up, install, migracje |
-| `make build` / `make up` / `make down` | Budowa obrazów dev, start (najpierw PostgreSQL i `keycloak-db.sh`, potem reszta), zatrzymanie (wolumeny zostają) |
+| `make build` / `make up` / `make down` | Budowa obrazów dev, start (najpierw PostgreSQL i `keycloak-db.sh`, potem reszta bez usług opcjonalnych), zatrzymanie także usług z profili (wolumeny zostają) |
 | `make keycloak-dev-seed` | Użytkownicy testowi w Keycloaku dev (klient sklepu, admin z TOTP), idempotentnie |
+| `make rabbitmq-up` / `rabbitmq-down` / `elasticsearch-up` / `elasticsearch-down` | Opcjonalne usługi z profili (nie startują z `make up`), sekcja „Usługi opcjonalne” |
 | `make stack-check-dev` | Kontrola infrastruktury dev (Keycloak, Redis, porty) we własnym projekcie `ecommerce-dev-check` |
+| `make stack-check-dev-optional` | To samo, z uruchomieniem i kontrolą RabbitMQ i Elasticsearcha (profile `messaging`, `search`) |
 | `make install` | Instalacja zależności wszystkich aplikacji (dev; Composer wymaga `make up`) |
 | `make pnpm-install` / `make pnpm c="…"` | Zależności JS do wolumenów Dockera / dowolna komenda pnpm w kontenerze |
 | `make check` | Wszystkie bramki jakości: obowiązkowe przed commitem |
@@ -322,6 +358,7 @@ Obrazy nie zawierają sekretów ani wartości z `.env`. Konfigurację podaje si�
 | `KEYCLOAK_DB_PASSWORD` | tak | Hasło roli `keycloak` w PostgreSQL (ustawia je `infra/scripts/keycloak-db.sh`) |
 | `KEYCLOAK_ADMIN_USERNAME`, `KEYCLOAK_ADMIN_PASSWORD` | tak | Tymczasowy administrator Keycloaka (realm `master`) tworzony przy pierwszym starcie |
 | `STORE_OIDC_CLIENT_SECRET`, `ADMIN_OIDC_CLIENT_SECRET` | tak | Sekrety klientów `store-bff` i `admin-bff`, importowane do realmów i przekazywane sklepowi |
+| `RABBITMQ_DEFAULT_USER`, `RABBITMQ_DEFAULT_PASS`, `ELASTIC_PASSWORD` | tylko z profilami `messaging` / `search` | Dane logowania opcjonalnych usług (sekcja „Usługi opcjonalne”). Profil domyślny ich nie wymaga; kontener aktywowanego profilu nie wystartuje bez nich. Usługi nie publikują portów |
 | `REDIS_SESSION_PASSWORD`, `REDIS_OPS_PASSWORD` | tak | Hasła użytkowników `store` i `ops` Redisa sesji; bez białych znaków, hasło `store` tylko ze znaków bezpiecznych w URL (trafia do `STORE_REDIS_URL`) |
 | `STORE_SESSION_ENC_KEYS` | tak | Klucze szyfrowania sesji sklepu `kid:base64(32 bajty)[,…]`, pierwszy aktywny, np. `k1:$(openssl rand -base64 32)` |
 | `OIDC_STORE_ISSUER`, `OIDC_ADMIN_ISSUER` | tak | Dokładny `iss` tokenów realmu `store` / `admin`, np. `https://auth.example.com/realms/store` (`https://AUTH_DOMAIN/realms/<realm>`) |

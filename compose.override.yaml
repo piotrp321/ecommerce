@@ -11,6 +11,8 @@
 #   for the store sessions (base definition in compose.yaml) gets development passwords;
 #   no application service depends on them (depends_on), so the backend and the store
 #   start and serve the catalog while they are stopped.
+# - RabbitMQ and Elasticsearch (profiles messaging and search, not started by `make up`)
+#   are prepared for later stages and not used by the applications yet.
 # All ports are bound to 127.0.0.1 only, so they are not reachable from the network.
 # In production the edge proxy (compose.prod.yaml) is the only entry point.
 #
@@ -188,6 +190,32 @@ services:
       - target: 6379
         host_ip: 127.0.0.1
         published: ${REDIS_PORT:-6379}
+        protocol: tcp
+
+  # Optional services (profiles in compose.yaml): development passwords and ports on
+  # 127.0.0.1. AMQP 5672 and the management UI 15672 (http://localhost:${RABBITMQ_MANAGEMENT_PORT}),
+  # Elasticsearch 9200 (user "elastic").
+  rabbitmq:
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-app}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-dev-only-rabbitmq-password}
+    ports:
+      - target: 5672
+        host_ip: 127.0.0.1
+        published: ${RABBITMQ_PORT:-5672}
+        protocol: tcp
+      - target: 15672
+        host_ip: 127.0.0.1
+        published: ${RABBITMQ_MANAGEMENT_PORT:-15672}
+        protocol: tcp
+
+  elasticsearch:
+    environment:
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:-dev-only-elastic-password}
+    ports:
+      - target: 9200
+        host_ip: 127.0.0.1
+        published: ${ELASTICSEARCH_PORT:-9200}
         protocol: tcp
 
 volumes:

@@ -173,6 +173,26 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
 
+  # Optional services (profiles messaging and search, base definition in compose.yaml),
+  # not started by default, not used by the applications yet. Reachable only inside the
+  # Compose network, no published ports. Passwords are taken from the environment
+  # without defaults; the containers refuse to start when they are missing (entrypoint
+  # in compose.yaml). They are not required by `config` for the default profile, which
+  # does not start these services.
+  rabbitmq:
+    user: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER:
+      RABBITMQ_DEFAULT_PASS:
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+  elasticsearch:
+    environment:
+      ELASTIC_PASSWORD:
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
 networks:
   # Store sessions: only the store and redis-session, without access to the outside.
   sessions:

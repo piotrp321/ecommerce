@@ -15,6 +15,8 @@ Główne źródło prawdy o architekturze systemu. Dokument ma dwie wyraźnie od
 | database | PostgreSQL | Dane backendu (dostęp tylko z backendu) i osobna baza `keycloak` z własną rolą |
 | keycloak | Keycloak 26.8.0 (`infra/docker/keycloak`, realmy w `infra/keycloak/realms`) | Dostawca tożsamości (OIDC): realmy `store` i `admin` |
 | redis-session | Redis 8.8.2 | Magazyn sesji sklepu (ACL, `noeviction`, AOF); dostęp tylko ze sklepu |
+| rabbitmq | RabbitMQ 4.3.5 (z panelem zarządzania), profil Compose `messaging` | Przygotowany, opcjonalny, bez integracji z aplikacjami |
+| elasticsearch | Elasticsearch 9.5.5, profil Compose `search` | Przygotowany, opcjonalny, bez integracji z aplikacjami |
 
 ### Przepływy komunikacji
 
@@ -91,6 +93,13 @@ Backend jest bezstanowy: przy każdym żądaniu sam waliduje token dostępu OIDC
 - Prod: nie-root (`redis`), `read_only`, `cap_drop: ALL`, bez portów, tylko w sieci `sessions` ze sklepem.
 - Sklep dostaje komplet konfiguracji logowania i sesji (`STORE_AUTH_MODE=oidc`, `STORE_OIDC_*`, `STORE_REDIS_URL`, `STORE_SESSION_ENC_KEYS`); kod BFF opisuje „Store jako BFF”.
 
+### Usługi opcjonalne (RabbitMQ, Elasticsearch)
+
+- Zdefiniowane w `compose.yaml` w profilach `messaging` (`rabbitmq`) i `search` (`elasticsearch`); `docker compose up` i `make up` ich nie uruchamiają, startują je `make rabbitmq-up` i `make elasticsearch-up`, a `make down` usuwa je razem z resztą. Żadna usługa nie ma na nie `depends_on`; żadna aplikacja ich nie używa.
+- Uwierzytelnianie jest wymagane: RabbitMQ bez użytkownika `guest` (użytkownik z `RABBITMQ_DEFAULT_USER`), Elasticsearch z `xpack.security` (użytkownik `elastic`, bez TLS, bo tylko sieć Compose). Kontener nie startuje bez haseł; w dev domyślne wartości mają prefiks `dev-only-`, w prod hasła podaje się w środowisku i są potrzebne tylko aktywowanemu profilowi.
+- Dev: porty tylko na `127.0.0.1`. Prod: bez portów, `cap_drop: ALL`, `no-new-privileges` (RabbitMQ jako użytkownik `rabbitmq`), dane w wolumenach `rabbitmq_data` i `elasticsearch_data`.
+- Limity: RabbitMQ 512 MB, Elasticsearch 1 GB (sterta 512 MB, tryb `single-node`).
+
 ## Planowane (zatwierdzone, w realizacji)
 
 Poniższe elementy nie są jeszcze wdrożone. Opisują decyzje, do których zmierza kod; w miarę realizacji przenosi się je do części „Stan aktualny”.
@@ -124,7 +133,7 @@ Tokeny dokleja po stronie serwera BFF sklepu oraz oauth2-proxy / admin-bff; SPA 
 
 - SPA zostanie połączona z API później. Wstępnie przez oauth2-proxy (realm `admin`), docelowo ewentualnie własny BFF (`admin-bff`). Żadnych tokenów w przeglądarce.
 
-### Redis, RabbitMQ, Elasticsearch
+### Redis cache, integracja RabbitMQ i Elasticsearcha
 
 - Redis cache powstanie później jako osobna instancja (inne wymagania niż sesje: eviction zamiast `noeviction`).
-- RabbitMQ i Elasticsearch to opcjonalne profile Compose, bez integracji biznesowej; integrujemy je dopiero przy konkretnym przypadku użycia.
+- RabbitMQ i Elasticsearch (opcjonalne profile, „Usługi opcjonalne”) integrujemy z aplikacjami dopiero przy konkretnym przypadku użycia.

@@ -108,6 +108,17 @@ done
 services="$(docker compose -f compose.yaml -f compose.prod.yaml config --services 2>/dev/null | sort | tr '\n' ' ')"
 [ "$services" = "admin backend database edge keycloak redis-session store " ] \
 	&& pass "default profile: exactly the services of the topology (no optional services)" || fail "services of the default profile: ${services}"
+# Optional services (profiles messaging and search): internal only, hardened, and their
+# passwords are not needed unless the profile is started (the containers refuse to start
+# without them, see compose.yaml).
+optional="$(env -u RABBITMQ_DEFAULT_USER -u RABBITMQ_DEFAULT_PASS -u ELASTIC_PASSWORD \
+	docker compose -f compose.yaml -f compose.prod.yaml --profile '*' config 2>/dev/null || true)"
+for svc in rabbitmq elasticsearch; do
+	# The service's block of the rendered configuration (services are indented by two spaces).
+	def="$(awk -v svc="${svc}:" '/^  [a-z-]+:$/ {on = ($1 == svc)} /^[a-z]/ {on = 0} on' <<<"$optional")"
+	{ [ -n "$def" ] && ! grep -q '^    ports:' <<<"$def" && grep -q '^    cap_drop:' <<<"$def" && grep -q -- '- ALL' <<<"$def" && grep -q -- '- no-new-privileges:true' <<<"$def"; } \
+		&& pass "${svc} (optional profile): no published ports, cap_drop ALL, no-new-privileges" || fail "${svc} (optional profile) definition: $(head -c 200 <<<"$def")"
+done
 if docker run --rm "$BACKEND_IMAGE" >/dev/null 2>&1; then
 	fail "backend image starts without APP_SECRET/DATABASE_PASSWORD"
 else
